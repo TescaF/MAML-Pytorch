@@ -8,7 +8,8 @@ from    meta import Meta
 
 def main(args):
 
-    save_path = os.getcwd() + "/data/saved_model.txt"
+    save_path = os.getcwd() + '/data/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '.pt'
+
     torch.cuda.synchronize()
     torch.manual_seed(222)
     torch.cuda.synchronize()
@@ -22,20 +23,20 @@ def main(args):
     dim_input = 1
     dim_output = 1
     config = [
-        ('linear', [dim_hidden[0], dim_input]),
-        ('relu', [True]),
-        ('bn', [dim_hidden[0]])]
+        ('fc', [dim_hidden[0], dim_input]),
+        ('relu', [True])]#,
+        #('bn', [dim_hidden[0]])]
 
     for i in range(1, len(dim_hidden)):
         config += [
-            ('linear', [dim_hidden[i], dim_hidden[i-1]]),
-            ('relu', [True]),
-            ('bn', [dim_hidden[i]])]
+            ('fc', [dim_hidden[i], dim_hidden[i-1]]),
+            ('relu', [True])] #,
+            #('bn', [dim_hidden[i]])]
 
     config += [
-        ('linear', [dim_output, dim_hidden[-1]]),
-        ('relu', [True]),
-        ('bn', [dim_output])]
+        ('fc', [dim_output, dim_hidden[-1]])] #,
+        #('relu', [True])] #,
+        #('bn', [dim_output])]
 
     #device = torch.device('cpu')
     device = torch.device('cuda')
@@ -68,8 +69,12 @@ def main(args):
                                      torch.from_numpy(inputb).float().to(device), torch.from_numpy(labelb).float().to(device)
 
         accs = maml(x_spt, y_spt, x_qry, y_qry)
-
         if step % 500 == 0:
+            preloss = ('%.10f'%accs[0].item())
+            postloss = ('%.10f'%accs[-1].item())
+            print('Step ' + str(step) + ': ' + preloss + ', ' + postloss)
+
+        '''if step % 500 == 0:
             accs = []
             for _ in range(1000//args.task_num):
                 batch_x, batch_y, amp, phase = db_train.next()
@@ -89,19 +94,18 @@ def main(args):
                     accs.append( test_acc )
 
             accs = np.array(accs).mean(axis=0).astype(np.float16)
-            print('Test acc:', accs)
-            torch.save(maml.state_dict(), save_path)
+            print('Test acc:', accs)'''
+    torch.save(maml.state_dict(), save_path)
 
 
 if __name__ == '__main__':
 
     argparser = argparse.ArgumentParser()
     argparser.add_argument('--epoch', type=int, help='epoch number', default=70000)
-    argparser.add_argument('--k_spt', type=int, help='k shot for support set', default=3)
+    argparser.add_argument('--k_spt', type=int, help='k shot for support set', default=10)
     argparser.add_argument('--k_qry', type=int, help='k shot for query set', default=15)
-    argparser.add_argument('--k_meta_spt', type=int, help='k shot for support set at meta-level', default=15)
-    argparser.add_argument('--task_num', type=int, help='meta batch size, namely task num', default=32)
-    argparser.add_argument('--meta_lr', type=float, help='meta-level outer learning rate', default=1e-3)
+    argparser.add_argument('--task_num', type=int, help='meta batch size, namely task num', default=25)
+    argparser.add_argument('--meta_lr', type=float, help='meta-level outer learning rate', default=0.001)
     argparser.add_argument('--update_lr', type=float, help='task-level inner update learning rate', default=0.001)
     argparser.add_argument('--update_step', type=int, help='task-level inner update steps', default=5)
     argparser.add_argument('--update_step_test', type=int, help='update steps for finetunning', default=10)

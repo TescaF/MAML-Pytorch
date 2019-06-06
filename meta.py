@@ -27,7 +27,6 @@ class Meta(nn.Module):
         self.meta_lr = args.meta_lr
         self.k_spt = args.k_spt
         self.k_qry = args.k_qry
-        self.k_meta_spt = args.k_meta_spt
         self.task_num = args.task_num
         self.update_step = args.update_step
         self.update_step_test = args.update_step_test
@@ -49,12 +48,11 @@ class Meta(nn.Module):
         querysz = x_qry.size(1)
 
         losses_q = [0 for _ in range(self.update_step + 1)]  # losses_q[i] is the loss on step i
-        corrects = [0 for _ in range(self.update_step + 1)]
-
 
         for i in range(task_num):
 
             # 1. run the i-th task and compute loss for k=0
+            #logits = self.net(x_spt[i], vars=self.net.parameters(), bn_training=True)
             logits = self.net(x_spt[i], vars=None, bn_training=True)
             loss = F.mse_loss(logits, y_spt[i])
             grad = torch.autograd.grad(loss, self.net.parameters()) #line 6 in alg
@@ -89,10 +87,13 @@ class Meta(nn.Module):
 
         # sum over all losses on query set across all tasks
         loss_q = losses_q[-1] / task_num
-
+        #pdb.set_trace()
         # optimize theta parameters
         self.meta_optim.zero_grad()
         loss_q.backward()
+        #print('meta update')
+        #for p in self.net.parameters()[:5]:
+        #    print(torch.norm(p).item())
         self.meta_optim.step()
 
         return np.array(losses_q) / task_num

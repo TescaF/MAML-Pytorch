@@ -56,6 +56,15 @@ class Learner(nn.Module):
                 # [ch_out]
                 self.vars.append(nn.Parameter(torch.zeros(param[0])))
 
+            elif name is 'fc':
+                # [ch_out, ch_in]
+                w = nn.Parameter(torch.ones(*param))
+                vals = self.truncated_normal(mean=0.0, stddev=0.01, m=w.numel())
+                w = nn.Parameter(torch.from_numpy(vals).float().view(w.shape[0], w.shape[1]))
+                self.vars.append(w)
+                # [ch_out]
+                self.vars.append(nn.Parameter(torch.zeros(param[0])))
+
             elif name is 'bn':
                 # [ch_out]
                 w = nn.Parameter(torch.ones(param[0]))
@@ -77,7 +86,25 @@ class Learner(nn.Module):
 
 
 
-
+    def truncated_normal(self, mean=0.0, stddev=1.0, m=1):
+        '''
+        The generated values follow a normal distribution with specified 
+        mean and standard deviation, except that values whose magnitude is 
+        more than 2 standard deviations from the mean are dropped and 
+        re-picked. Returns a vector of length m
+        '''
+        samples = []
+        for i in range(m):
+            while True:
+                sample = np.random.normal(mean, stddev)
+                if np.abs(sample) <= 2 * stddev:
+                    break
+            samples.append(sample)
+        assert len(samples) == m, "something wrong"
+        if m == 1:
+            return samples[0]
+        else:
+            return np.array(samples)
 
 
     def extra_repr(self):
@@ -92,6 +119,10 @@ class Learner(nn.Module):
             elif name is 'convt2d':
                 tmp = 'convTranspose2d:(ch_in:%d, ch_out:%d, k:%dx%d, stride:%d, padding:%d)'\
                       %(param[0], param[1], param[2], param[3], param[4], param[5],)
+                info += tmp + '\n'
+
+            elif name is 'fc':
+                tmp = 'fc:(in:%d, out:%d)'%(param[1], param[0])
                 info += tmp + '\n'
 
             elif name is 'linear':
@@ -150,6 +181,10 @@ class Learner(nn.Module):
                 x = F.conv_transpose2d(x, w, b, stride=param[4], padding=param[5])
                 idx += 2
                 # print(name, param, '\tout:', x.shape)
+            elif name is 'fc':
+                w, b = vars[idx], vars[idx + 1]
+                x = F.linear(x, w, b)
+                idx += 2
             elif name is 'linear':
                 w, b = vars[idx], vars[idx + 1]
                 x = F.linear(x, w, b)
