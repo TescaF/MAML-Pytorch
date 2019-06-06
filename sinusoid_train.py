@@ -60,8 +60,8 @@ def main(args):
         inputa = batch_x[:, :args.k_spt, :]
         labela = batch_y[:, :args.k_spt, :]
         if args.k_spt == 1:
-            inputa = np.concatenate([inputa, inputa], axis=1)     
-            labela = np.concatenate([labela, labela], axis=1)     
+            inputa = np.array(inputa) #np.concatenate([inputa, inputa], axis=1)     
+            labela = np.array(labela) #np.concatenate([labela, labela], axis=1)     
         labelb = batch_y[:,args.k_spt:, :]
         inputb = batch_x[:,args.k_spt:, :]
 
