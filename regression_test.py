@@ -3,6 +3,7 @@ import random
 import  torch, os, sys
 import  numpy as np
 from sinusoid import Sinusoid
+from polynomial import Polynomial
 import  argparse
 from    torch.nn import functional as F
 
@@ -10,7 +11,11 @@ from meta import Meta
 
 def main(args):
 
-    save_path = os.getcwd() + '/data/model_batchsz' + str(args.k_model) + '_stepsz' + str(args.update_lr) + '.pt'
+    if args.func_type == "sinusoid":
+        save_path = os.getcwd() + '/data/sinusoid/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '.pt'
+    if args.func_type == "polynomial":
+        save_path = os.getcwd() + '/data/polynomial/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '.pt'
+
 
     torch.cuda.synchronize()
     torch.manual_seed(222)
@@ -26,8 +31,13 @@ def main(args):
     torch.cuda.synchronize()
 
     dim_hidden = [40,40]
-    dim_input = 1
-    dim_output = 1
+    if args.func_type == "polynomial":
+        dim_input =2
+        dim_output = 1
+    if args.func_type == "sinusoid":
+        dim_input =1
+        dim_output = 1
+
     config = [
         ('fc', [dim_hidden[0], dim_input]),
         ('relu', [True])]#,
@@ -58,13 +68,20 @@ def main(args):
     tgt_ests = None
     dists = None
 
-    db_train = Sinusoid(
-                       batchsz=args.task_num,
-                       k_shot=args.k_spt,
-                       k_qry=args.k_qry)
+    if args.func_type == "sinusoid":
+        db_train = Sinusoid(
+                           batchsz=args.task_num,
+                           k_shot=args.k_spt,
+                           k_qry=args.k_qry)
+
+    if args.func_type == "polynomial":
+        db_train = Polynomial(
+                           batchsz=args.task_num,
+                           k_shot=args.k_spt,
+                           k_qry=args.k_qry)
 
     all_accs = []
-    batch_x, batch_y, amp, phase = db_train.next()
+    batch_x, batch_y = db_train.next()
 
     for i in range(args.task_num):
         if i % 10 == 0:
@@ -107,6 +124,8 @@ def main(args):
             if len(accs) == 0:
                 accs.append(test_acc[0])
             accs.append( test_acc[-1] )
+            if np.isnan(test_acc[-1].cpu().detach().numpy()):
+                pdb.set_trace()
         if args.iter_qry == 1:
             all_accs.append(accs)
         else:
@@ -161,6 +180,7 @@ if __name__ == '__main__':
     argparser.add_argument('--iter_qry', type=int, help='learn from examples one-at-a-time', default=1)
     argparser.add_argument('--merge_spt_qry', type=int, help='select queries during AL from the test set', default=0)
     argparser.add_argument('--al_method', type=str, help='AL algorithm', default="none")
+    argparser.add_argument('--func_type', type=str, help='function type', default="sinusoid")
 
     args = argparser.parse_args()
 

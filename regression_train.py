@@ -2,13 +2,21 @@ import pdb
 import  torch, os
 import  numpy as np
 from sinusoid import Sinusoid
+from polynomial import Polynomial
+from imagenet import ImageNet
 import  argparse
 
 from    meta import Meta
 
 def main(args):
 
-    save_path = os.getcwd() + '/data/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '.pt'
+    sinusoid = {'name':'sinusoid','class':Sinusoid, 'dims':[1,1]}
+    polynomial = {'name':'polynomial', 'class':Polynomial, 'dims':[2,1]}
+    imagenet = {'name':'imagenet', 'class':ImageNet, 'dims':[4096,2]}
+    data_params = {'sinusoid':sinusoid, 'polynomial':polynomial, 'imagenet':imagenet}
+    func_data = data_params[args.func_type]
+
+    save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '.pt'
 
     torch.cuda.synchronize()
     torch.manual_seed(222)
@@ -20,8 +28,7 @@ def main(args):
     print(args)
 
     dim_hidden = [40,40]
-    dim_input = 1
-    dim_output = 1
+    dim_input, dim_output = func_data['dims']
     config = [
         ('fc', [dim_hidden[0], dim_input]),
         ('relu', [True])]#,
@@ -48,7 +55,7 @@ def main(args):
     print(maml)
     print('Total trainable tensors:', num)
 
-    db_train = Sinusoid(
+    db_train = func_data['class'](
                        batchsz=args.task_num,
                        k_shot=args.k_spt,
                        k_qry=args.k_qry)
@@ -56,7 +63,7 @@ def main(args):
     # epoch: number of training batches
     for step in range(args.epoch):
 
-        batch_x, batch_y, amp, phase = db_train.next()
+        batch_x, batch_y = db_train.next()
         inputa = batch_x[:, :args.k_spt, :]
         labela = batch_y[:, :args.k_spt, :]
         if args.k_spt == 1:
@@ -109,6 +116,8 @@ if __name__ == '__main__':
     argparser.add_argument('--update_lr', type=float, help='task-level inner update learning rate', default=0.001)
     argparser.add_argument('--update_step', type=int, help='task-level inner update steps', default=5)
     argparser.add_argument('--update_step_test', type=int, help='update steps for finetunning', default=10)
+    argparser.add_argument('--func_type', type=str, help='function type', default="sinusoid")
+    
 
     args = argparser.parse_args()
 
