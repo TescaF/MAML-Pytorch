@@ -1,9 +1,12 @@
 import pdb
 import random
 import  torch, os, sys
+import os.path
 import  numpy as np
 from sinusoid import Sinusoid
 from polynomial import Polynomial
+from imagenet import ImageNet
+from cornell_grasps import CornellGrasps
 import  argparse
 from    torch.nn import functional as F
 
@@ -11,11 +14,20 @@ from meta import Meta
 
 def main(args):
 
-    if args.func_type == "sinusoid":
-        save_path = os.getcwd() + '/data/sinusoid/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '.pt'
-    if args.func_type == "polynomial":
-        save_path = os.getcwd() + '/data/polynomial/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '.pt'
+    sinusoid = {'name':'sinusoid','class':Sinusoid, 'dims':[1,1]}
+    polynomial = {'name':'polynomial', 'class':Polynomial, 'dims':[2,1]}
+    imagenet = {'name':'imagenet', 'class':ImageNet, 'dims':[4096,2]}
+    grasps = {'name':'grasps', 'class':CornellGrasps, 'dims':[4096,2]}
+    data_params = {'sinusoid':sinusoid, 'polynomial':polynomial, 'imagenet':imagenet, 'grasps':grasps}
+    func_data = data_params[args.func_type]
 
+    last_epoch = 1000
+    save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_epoch' + str(last_epoch) + '.pt'
+    while os.path.isfile(save_path):
+        valid_epoch = last_epoch
+        last_epoch += 1000
+        save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_epoch' + str(last_epoch) + '.pt'
+    save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_epoch' + str(valid_epoch) + '.pt'
 
     torch.cuda.synchronize()
     torch.manual_seed(222)
@@ -24,6 +36,7 @@ def main(args):
     torch.cuda.synchronize()
     np.random.seed(222)
 
+    print("loading epoch " + str(valid_epoch))
     print(args)
 
     #device = torch.device('cpu')
@@ -31,12 +44,7 @@ def main(args):
     torch.cuda.synchronize()
 
     dim_hidden = [40,40]
-    if args.func_type == "polynomial":
-        dim_input =2
-        dim_output = 1
-    if args.func_type == "sinusoid":
-        dim_input =1
-        dim_output = 1
+    dim_input, dim_output = func_data['dims']
 
     config = [
         ('fc', [dim_hidden[0], dim_input]),
@@ -54,7 +62,7 @@ def main(args):
         #('relu', [True])] #,
         #('bn', [dim_output])]
 
-    mod = Meta(args, config).to(device)
+    mod = Meta(args, config, func_data['dims']).to(device)
     mod.load_state_dict(torch.load(save_path))
     mod.eval()
 
@@ -68,17 +76,10 @@ def main(args):
     tgt_ests = None
     dists = None
 
-    if args.func_type == "sinusoid":
-        db_train = Sinusoid(
-                           batchsz=args.task_num,
-                           k_shot=args.k_spt,
-                           k_qry=args.k_qry)
-
-    if args.func_type == "polynomial":
-        db_train = Polynomial(
-                           batchsz=args.task_num,
-                           k_shot=args.k_spt,
-                           k_qry=args.k_qry)
+    db_train = func_data['class'](
+                       batchsz=args.task_num,
+                       k_shot=args.k_spt,
+                       k_qry=args.k_qry)
 
     all_accs = []
     batch_x, batch_y = db_train.next()
@@ -181,6 +182,7 @@ if __name__ == '__main__':
     argparser.add_argument('--merge_spt_qry', type=int, help='select queries during AL from the test set', default=0)
     argparser.add_argument('--al_method', type=str, help='AL algorithm', default="none")
     argparser.add_argument('--func_type', type=str, help='function type', default="sinusoid")
+    argparser.add_argument('--svm_lr', type=float, help='task-level inner update learning rate', default=0.001)
 
     args = argparser.parse_args()
 

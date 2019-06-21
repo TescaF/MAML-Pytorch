@@ -21,6 +21,7 @@ class Sinusoid:
 
         self.resize = 1 
         self.num_samples_per_class = k_shot + k_qry 
+        np.random.seed(222)
 
     def next(self):
         amp = np.random.uniform(self.amp_range[0], self.amp_range[1], [self.batch_size])

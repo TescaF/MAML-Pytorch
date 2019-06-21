@@ -22,11 +22,10 @@ class Learner(nn.Module):
 
 
         self.config = config
-
         # this dict contains all tensors needed to be optimized
         self.vars = nn.ParameterList()
         # running_mean and running_var
-        self.vars_bn = nn.ParameterList()
+        #self.vars_bn = nn.ParameterList()
 
         for i, (name, param) in enumerate(self.config):
             if name is 'conv2d':
@@ -223,7 +222,7 @@ class Learner(nn.Module):
 
         # make sure variable is used properly
         assert idx == len(vars)
-        assert bn_idx == len(self.vars_bn)
+        #assert bn_idx == len(self.vars_bn)
 
 
         return x
