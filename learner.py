@@ -25,7 +25,7 @@ class Learner(nn.Module):
         # this dict contains all tensors needed to be optimized
         self.vars = nn.ParameterList()
         # running_mean and running_var
-        #self.vars_bn = nn.ParameterList()
+        self.vars_bn = nn.ParameterList()
 
         for i, (name, param) in enumerate(self.config):
             if name is 'conv2d':

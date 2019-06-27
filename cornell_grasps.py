@@ -29,31 +29,38 @@ class CornellGrasps:
         print(str(self.dataset.shape[0]) + " samples loaded (Dims " + str(self.dim_input) + "x" + str(self.dim_output) + ")")
 
         self.num_samples_per_class = k_shot + k_qry 
-        self.task_angles = [i*10 for i in range(-9, 10)]
+        self.task_angles = range(-90, 90, 5) #i*60 for i in range(-1, 2)]
+        #self.task_angles = [i*10 for i in range(-9, 10)]
+        self.binned_data = None
+        self.bin_samples()
+
+    def bin_samples(self):
+        data = dict()
+        for a in range(len(self.task_angles)-1):
+            data[a] = []
+        for img in range(self.dataset.shape[0]):
+            for grasp in range(len(self.outputs[0,img])):
+                clip_angle = self.outputs[0,img][grasp][0]
+                if clip_angle <= -90:
+                    clip_angle += 180
+                if clip_angle >= 90:
+                    clip_angle -= 180
+                for a in range(len(self.task_angles)-1):
+                    if self.task_angles[a] < clip_angle < self.task_angles[a+1]:
+                        data[a].append([np.squeeze(self.dataset[img]), self.outputs[0,img][grasp][1:]])
+        self.binned_data = data 
 
     def next(self):
         outputs = np.zeros([self.batch_size, self.num_samples_per_class, self.dim_output])
         init_inputs = np.zeros([self.batch_size, self.num_samples_per_class, self.dim_input])
-        for func in range(self.batch_size):
-            angle_bin = np.random.randint(0, len(self.task_angles)-1)
-            s = 0
-            while s < self.num_samples_per_class:
-                k = np.random.randint(0, self.dataset.shape[0]) #, self.num_samples_per_class)
-                num = len(self.outputs[0,k])
-                g = 0
-                while g < num:
-                    clip_angle = self.outputs[0,k][g][0]
-                    if clip_angle <= -90:
-                        clip_angle += 180
-                    if clip_angle >= 90:
-                        clip_angle -= 180
-                    if self.task_angles[angle_bin] < clip_angle < self.task_angles[angle_bin+1]:
-                        init_inputs[func,s] = np.squeeze(self.dataset[k])
-                        outputs[func,s] = self.outputs[0,k][g][1:]
-                        s += 1
-                        break
-                    else:
-                        g += 1
+        tasks = np.random.randint(0, len(self.task_angles)-1, self.batch_size)
+        for i in range(self.batch_size):
+            t = tasks[i]
+            samples = np.random.randint(0, len(self.binned_data[t]), self.num_samples_per_class)
+            for j in range(self.num_samples_per_class):
+                s = samples[j]
+                init_inputs[i, j] = self.binned_data[t][s][0]
+                outputs[i, j] = self.binned_data[t][s][1]
         return init_inputs, outputs
 
 if __name__ == '__main__':

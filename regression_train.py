@@ -9,6 +9,7 @@ from cornell_grasps import CornellGrasps
 import  argparse
 
 from    meta import Meta
+#from ab_meta import Meta
 
 def main(args):
 
@@ -30,8 +31,11 @@ def main(args):
 
     print(args)
 
-    dim_hidden = [40,40]
+    dim_hidden = [4096,500]
+    #dim_hidden = [40,40]
     dim_input, dim_output = func_data['dims']
+
+    '''
     config = [
         ('fc', [dim_hidden[0], dim_input]),
         ('relu', [True])]#,
@@ -47,6 +51,24 @@ def main(args):
         ('fc', [dim_output, dim_hidden[-1]])] #,
         #('relu', [True])] #,
         #('bn', [dim_output])]
+    '''
+
+
+    config = [
+        ('linear', [dim_hidden[0], dim_input]),
+        ('relu', [True]),
+        ('bn', [dim_hidden[0]])]
+
+    for i in range(1, len(dim_hidden)):
+        config += [
+            ('linear', [dim_hidden[i], dim_hidden[i-1]]),
+            ('relu', [True]),
+            ('bn', [dim_hidden[i]])]
+
+    config += [
+        ('linear', [dim_output, dim_hidden[-1]])] 
+
+
 
     #device = torch.device('cpu')
     device = torch.device('cuda')
@@ -83,14 +105,14 @@ def main(args):
         #accs, svm_loss = maml(x_spt, y_spt, x_qry, y_qry)
         #time_diff = time.time() - start
         #print(time_diff)
-        if step % 100 == 0:
+        if step % 1 == 0:
             prelosses.append(accs[0].item())
             postlosses.append(accs[-1].item())
             #svmlosses.append(svm_loss.item())
 
         if step % 1000 == 0:
-            preloss = ('%.10f'%np.mean(prelosses)) #accs[0].item())
-            postloss = ('%.10f'%np.mean(postlosses)) #accs[-1].item())
+            preloss = '{:.3e}'.format(np.mean(prelosses)) #accs[0].item())
+            postloss = '{:.3e}'.format(np.mean(postlosses)) #accs[-1].item())
             #svmloss = ('%.10f'%np.mean(svmlosses)) #accs[-1].item())
             print('Step ' + str(step) + ': ' + preloss + ', ' + postloss)
             #print('SVM: ' + svmloss)

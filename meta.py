@@ -23,7 +23,7 @@ class Meta(nn.Module):
         """
         super(Meta, self).__init__()
 
-        self.update_lr = 0.0005 #args.update_lr
+        self.update_lr = args.update_lr
         self.meta_lr = args.meta_lr
         self.svm_lr = args.svm_lr
         self.k_spt = args.k_spt
@@ -34,10 +34,10 @@ class Meta(nn.Module):
 
         self.net = Learner(config) #, args.imgc, args.imgsz)
         self.meta_optim = optim.Adam(self.net.parameters(), lr=self.meta_lr)
-        self.svm_weights = nn.Parameter(torch.zeros(dims[0]))
-        self.svm_optim = optim.Adam([self.svm_weights], lr=self.svm_lr)
-        self.svm_max_iter = 10000
-        self.svm_epsilon = 0.001
+        #self.svm_weights = nn.Parameter(torch.zeros(dims[0]))
+        #self.svm_optim = optim.Adam([self.svm_weights], lr=self.svm_lr)
+        #self.svm_max_iter = 10000
+        #self.svm_epsilon = 0.001
 
     def forward(self, x_spt, y_spt, x_qry, y_qry):
         """
@@ -49,18 +49,25 @@ class Meta(nn.Module):
         :return:
         """
         task_num = x_spt.size(0)
-        svm_loss = 0.0
+        #svm_loss = 0.0
         losses_q = [0 for _ in range(self.update_step + 1)]  # losses_q[i] is the loss on step i
         losses_list = []
+
+        ## Freeze all layers except the last one
+        for p in self.net.parameters():
+            p.requires_grad = False
+        list(self.net.parameters())[-2].requires_grad = True
+        list(self.net.parameters())[-1].requires_grad = True
+        #iter_optim = optim.Adam(self.net.parameters(), lr=self.update_lr)
+
         for i in range(task_num):
 
             # 1. run the i-th task and compute loss for k=0
             #logits = self.net(x_spt[i], vars=self.net.parameters(), bn_training=True)
             logits = self.net(x_spt[i], vars=None, bn_training=True)
             loss = F.mse_loss(logits, y_spt[i])
-            grad = torch.autograd.grad(loss, self.net.parameters()) #line 6 in alg
-            fast_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, self.net.parameters())))
-
+            grad = torch.autograd.grad(loss, filter(lambda p: p.requires_grad, self.net.parameters())) #line 6 in alg
+            fast_weights = list(self.net.parameters())[:-2] + list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, filter(lambda p: p.requires_grad, self.net.parameters()))))
             # loss before first update
             with torch.no_grad():
                 #tuples, comps = self.relative_dists(logits)
@@ -87,9 +94,11 @@ class Meta(nn.Module):
                 logits = self.net(x_spt[i], fast_weights, bn_training=True)
                 loss = F.mse_loss(logits, y_spt[i])
                 # 2. compute grad on theta_pi
-                grad = torch.autograd.grad(loss, fast_weights)
+                grad = torch.autograd.grad(loss, filter(lambda p: p.requires_grad, fast_weights)) #line 6 in alg
+                fast_weights = list(self.net.parameters())[:-2] + list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, filter(lambda p: p.requires_grad, fast_weights))))
+                #grad = torch.autograd.grad(loss, fast_weights)
                 # 3. theta_pi = theta_pi - train_lr * grad
-                fast_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, fast_weights)))
+                #fast_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, fast_weights)))
 
                 logits_q = self.net(x_qry[i], fast_weights, bn_training=True)
                 # loss_q will be overwritten and just keep the loss_q on last update step.
@@ -109,6 +118,8 @@ class Meta(nn.Module):
         loss_q = losses_q[-1] / task_num
         #pdb.set_trace()
         # optimize theta parameters
+        for p in self.net.parameters():
+            p.requires_grad = True
         self.meta_optim.zero_grad()
         loss_q.backward()
         #print('meta update')
