@@ -9,7 +9,8 @@ from imagenet import ImageNet
 from cornell_grasps import CornellGrasps
 import  argparse
 from    torch.nn import functional as F
-
+from copy import deepcopy
+import itertools
 from meta import Meta
 
 def main(args):
@@ -43,10 +44,11 @@ def main(args):
     device = torch.device('cuda')
     torch.cuda.synchronize()
 
-    dim_hidden = [40,40]
+    dim_hidden = [4096,500]
+    #dim_hidden = [40,40]
     dim_input, dim_output = func_data['dims']
 
-    config = [
+    '''config = [
         ('fc', [dim_hidden[0], dim_input]),
         ('relu', [True])]#,
         #('bn', [dim_hidden[0]])]
@@ -60,7 +62,22 @@ def main(args):
     config += [
         ('fc', [dim_output, dim_hidden[-1]])] #,
         #('relu', [True])] #,
-        #('bn', [dim_output])]
+        #('bn', [dim_output])]'''
+
+    config = [ 
+        ('linear', [dim_hidden[0], dim_input]),
+        ('relu', [True]),
+        ('bn', [dim_hidden[0]])]
+    
+    for i in range(1, len(dim_hidden)): 
+        config += [
+            ('linear', [dim_hidden[i], dim_hidden[i-1]]),
+            ('relu', [True]),
+            ('bn', [dim_hidden[i]])]
+
+    config += [
+        ('linear', [dim_output, dim_hidden[-1]])]
+
 
     mod = Meta(args, config, func_data['dims']).to(device)
     mod.load_state_dict(torch.load(save_path))
@@ -95,33 +112,44 @@ def main(args):
         c_data = torch.from_numpy(batch_x[i, :args.k_spt, :]).float().to(device) 
         t_data = q_set[0]
         s_idx = None
-            
-        while len(c_idx) > 0:
+        tuned_w = None
+        curr_mod = deepcopy(mod.net)
+        while len(c_idx) >= args.batch_sz: #% args.batch_sz == 0:
             if args.iter_qry == 1:
                 if args.al_method == "random":
                     s_idx = al_method_random(c_idx)
                 if args.al_method == "k_centers":
-                    s_idx = al_method_k_centers(mod, dists, cand_ests, tgt_ests, c_data, c_idx, t_data, s_idx)
-                inputa = [batch_x[i, s_idx, :]]
-                labela = [batch_y[i, s_idx, :]]
+                    s_idx = al_method_k_centers(curr_mod, tuned_w, c_data, c_idx, t_data, args.batch_sz)
+                    del curr_mod
+                inputa, labela = [], []
+                for b in s_idx:
+                    inputa.append(batch_x[i,b,:])
+                    labela.append(batch_y[i,b,:])
                 if queries is None:
-                    qin = np.array(inputa) #np.concatenate([inputa, inputa]) #, axis=1)     
-                    ql = np.array(labela) #np.concatenate([labela, labela]) #, axis=1)     
-                    s_idxs = [s_idx]
+                    #qin = np.array(inputa) #np.concatenate([inputa, inputa]) #, axis=1)     
+                    #ql = np.array(labela) #np.concatenate([labela, labela]) #, axis=1)     
+                    qin = np.concatenate([inputa, inputa]) #, axis=1)     
+                    ql = np.concatenate([labela, labela]) #, axis=1)     
+                    s_idxs = s_idx #[s_idx]
                     queries = [inputa, labela, s_idxs]
                 else:
                     qin = np.concatenate([queries[0], inputa]) #, axis=1)     
                     ql = np.concatenate([queries[1], labela]) #, axis=1)     
-                    s_idxs.append(s_idx)
+                    s_idxs += s_idx
+                    #s_idxs.append(s_idx)
                     queries = [qin, ql, s_idxs]
-                c_idx = c_idx[c_idx != s_idx]
+                c_new = []
+                for c in c_idx:
+                    if c not in s_idx:
+                        c_new.append(c)
+                c_idx = np.array(c_new)
 
             else:
                 qin = batch_x[i, :args.k_spt, :]
                 ql = batch_y[i, :args.k_spt, :]
                 c_idx = []
             qin, ql = torch.from_numpy(qin).float().to(device), torch.from_numpy(ql).float().to(device)
-            test_acc = mod.finetunning(qin, ql, q_set[0], q_set[1])
+            test_acc, curr_mod, tuned_w = mod.finetuning(qin, ql, q_set[0], q_set[1])
             if len(accs) == 0:
                 accs.append(test_acc[0])
             accs.append( test_acc[-1] )
@@ -137,16 +165,16 @@ def main(args):
 def al_method_random(avail_cand_idx):
     return avail_cand_idx[random.randint(0, len(avail_cand_idx) - 1)]
 
-def al_method_k_centers(mod, dists, cand_ests, tgt_ests, cand_data, avail_cand_idx, target_data, labeled_query):
-    if dists is None:
-        cand_ests = mod.net(cand_data, vars = mod.net.parameters())
-        tgt_ests = mod.net(target_data, vars = mod.net.parameters())
-    else:
-        x = labeled_query[0]
-        y = labeled_query[1]
-        cand_ests[x] = y
-        if args.merge_spt_qry == 1:
-            tgt_ests[x] = y
+def al_method_k_centers(mod, tuned_w, cand_data, avail_cand_idx, target_data, req_count = 1):
+    if tuned_w is None:
+        tuned_w = mod.parameters()
+    cand_ests = mod(cand_data, vars = tuned_w)
+    tgt_ests = mod(target_data, vars = tuned_w)
+    '''x = labeled_query[0]
+    y = labeled_query[1]
+    cand_ests[x] = y
+    if args.merge_spt_qry == 1:
+        tgt_ests[x] = y'''
 
     dists = np.ones((cand_data.shape[0], target_data.shape[0]))
     for i in range(cand_data.shape[0]):
@@ -155,16 +183,18 @@ def al_method_k_centers(mod, dists, cand_ests, tgt_ests, cand_data, avail_cand_i
 
     labeled_cands = np.setdiff1d(range(cand_data.shape[0]), avail_cand_idx)
     max_min_dists = []
-    for x in avail_cand_idx:
+    C = list(itertools.combinations(avail_cand_idx, req_count))
+    for i in range(len(C)):
+        x = C[i]
         min_dists = []
         for pt in range(target_data.shape[0]):
             min_dist = np.inf
-            for exp_cands in np.concatenate([labeled_cands, [x]]):
+            for exp_cands in np.concatenate([labeled_cands, x]):
                 min_dist = min(min_dist, dists[exp_cands, pt])
             min_dists.append(min_dist)
-        max_min_dists.append([x, max(min_dists)])
+        max_min_dists.append([i, max(min_dists)])
     idx = np.argmin(np.array(max_min_dists)[:,1])
-    return max_min_dists[idx][0]
+    return C[idx] # max_min_dists[idx][0]
             
 
 if __name__ == '__main__':
@@ -183,6 +213,7 @@ if __name__ == '__main__':
     argparser.add_argument('--al_method', type=str, help='AL algorithm', default="none")
     argparser.add_argument('--func_type', type=str, help='function type', default="sinusoid")
     argparser.add_argument('--svm_lr', type=float, help='task-level inner update learning rate', default=0.001)
+    argparser.add_argument('--batch_sz', type=int, help='task-level inner update learning rate', default=1)
 
     args = argparser.parse_args()
 
