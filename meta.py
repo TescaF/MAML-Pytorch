@@ -10,7 +10,7 @@ from    svm import SVM
 from    learner import Learner
 from    copy import deepcopy
 import  itertools
-
+import math
 
 class Meta(nn.Module):
     """
@@ -39,7 +39,7 @@ class Meta(nn.Module):
         #self.svm_max_iter = 10000
         #self.svm_epsilon = 0.001
 
-    def forward(self, x_spt, y_spt, x_qry, y_qry):
+    def forward(self, x_spt, y_spt, x_qry, y_qry, param_dim, num_tuned_layers):
         """
 
         :param x_spt:   [b, setsz, c_, h, w]
@@ -49,6 +49,14 @@ class Meta(nn.Module):
         :return:
         """
         task_num = x_spt.size(0)
+        if param_dim > 0:
+            p_spt = x_spt[:,:,-param_dim:]
+            p_qry = x_qry[:,:,-param_dim:]
+            x_spt = x_spt[:,:,:-param_dim]
+            x_qry = x_qry[:,:,:-param_dim]
+        else:
+            p_spt = task_num * [None]
+            p_qry = task_num * [None]
         #svm_loss = 0.0
         losses_q = [0 for _ in range(self.update_step + 1)]  # losses_q[i] is the loss on step i
         losses_list = []
@@ -56,38 +64,39 @@ class Meta(nn.Module):
         ## Freeze all layers except the last one
         for p in self.net.parameters():
             p.requires_grad = False
-        list(self.net.parameters())[-2].requires_grad = True
-        list(self.net.parameters())[-1].requires_grad = True
-
+        for i in range(num_tuned_layers):
+            list(self.net.parameters())[(-1) * (i+1)].requires_grad = True
         for i in range(task_num):
 
             # 1. run the i-th task and compute loss for k=0
-            logits = self.net(x_spt[i], vars=None, bn_training=True)
+            logits = self.net(x_spt[i], vars=None, bn_training=True, param_tensor=p_spt[i])
             loss = F.mse_loss(logits, y_spt[i])
             grad = torch.autograd.grad(loss, filter(lambda p: p.requires_grad, self.net.parameters())) #line 6 in alg
-            fast_weights = list(self.net.parameters())[:-2] + list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, filter(lambda p: p.requires_grad, self.net.parameters()))))
+            fast_weights = list(self.net.parameters())[:(-1)*num_tuned_layers] + list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, filter(lambda p: p.requires_grad, self.net.parameters()))))
             # loss before first update
+            if math.isnan(loss):
+                pdb.set_trace()
             with torch.no_grad():
-                logits_q = self.net(x_qry[i], self.net.parameters(), bn_training=True)
+                logits_q = self.net(x_qry[i], self.net.parameters(), bn_training=True, param_tensor=p_qry[i])
                 loss_q = F.mse_loss(logits_q, y_qry[i])
                 losses_q[0] += loss_q
                 losses_list.append(loss_q)
 
             # loss after the first update
             with torch.no_grad():
-                logits_q = self.net(x_qry[i], fast_weights, bn_training=True)
+                logits_q = self.net(x_qry[i], fast_weights, bn_training=True, param_tensor=p_qry[i])
                 loss_q = F.mse_loss(logits_q, y_qry[i])
                 losses_q[1] += loss_q
 
             for k in range(1, self.update_step):
                 # 1. run the i-th task and compute loss for k=1~K-1
-                logits = self.net(x_spt[i], fast_weights, bn_training=True)
+                logits = self.net(x_spt[i], fast_weights, bn_training=True, param_tensor=p_spt[i])
                 loss = F.mse_loss(logits, y_spt[i])
                 # 2. compute grad on theta_pi
                 grad = torch.autograd.grad(loss, filter(lambda p: p.requires_grad, fast_weights)) #line 6 in alg
-                fast_weights = list(self.net.parameters())[:-2] + list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, filter(lambda p: p.requires_grad, fast_weights))))
+                fast_weights = list(self.net.parameters())[:(-1)*num_tuned_layers] + list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, filter(lambda p: p.requires_grad, self.net.parameters()))))
 
-                logits_q = self.net(x_qry[i], fast_weights, bn_training=True)
+                logits_q = self.net(x_qry[i], fast_weights, bn_training=True, param_tensor=p_qry[i])
                 loss_q = F.mse_loss(logits_q, y_qry[i])
                 losses_q[k + 1] += loss_q
         # sum over all losses on query set across all tasks
@@ -103,134 +112,56 @@ class Meta(nn.Module):
         return np.array(losses_q) / task_num #, svm_loss_total
         #return accs
 
-    def diff_pairs(self, x, y):
-        x_diffs, x_pairs, y_diffs, y_pairs = [], [], [], []
-        for i in range(x.shape[0]):
-            for j in range(x.shape[0]):
-                x_diffs.append(x[i] - x[j])
-                y_diffs.append(y[i] - y[j])
-        for i in range(len(x_diffs)):
-            for j in range(len(x_diffs)):
-                x_pairs.append((x_diffs[i] * x_diffs[i]) - (x_diffs[j] * x_diffs[j]))
-                y_pairs.append(torch.norm(y_diffs[i] - y_diffs[j], 2).sign())
-        return torch.stack(x_pairs), torch.stack(y_pairs)
-
-    def tuple_matrices(self, tuples, x):
-        # produce dX3 matrix for each tuple, where each row is a feature and each column is an instance
-        m = []
-        for t in tuples:
-            i, j, g, h = t[0,0], t[0,1], t[0,2], t[0,3]
-            m.append(torch.stack((x[i], x[j], x[g], x[h]), 1))
-        return torch.stack(m,0)
-
-    def relative_dists(self, y):
-        # tuple: (i, j, g, h)
-        # 1 if d(i,j) < d(g, h)
-        # 0 otherwise
-        tuples = list(itertools.permutations(range(y.shape[0]), 4))
-        comps = []
-        for (i, j, g, h) in tuples:
-            #d1 = np.square(y[i] - y[j])
-            d1 = torch.norm(y[i] - y[j], 2)
-            d2 = torch.norm(y[g] - y[h], 2)
-            #d2 = np.square(y[i] - y[k])
-            comps.append(torch.sign(d2 - d1)) #np.sign(d2 - d1))
-        return np.matrix(tuples), torch.stack(comps)
-
-    def finetuning(self, x_spt, y_spt, x_qry, y_qry):
+    def finetuning(self, x_spt, y_spt, x_qry, y_qry, param_dim, num_tuned_layers):
         net = deepcopy(self.net)
         ## Freeze all layers except the last one
         for p in net.parameters():
             p.requires_grad = False
-        list(net.parameters())[-2].requires_grad = True
-        list(net.parameters())[-1].requires_grad = True
+        for i in range(num_tuned_layers):
+            list(net.parameters())[(-1) * (i+1)].requires_grad = True
 
+        task_num = x_spt.size(0)
+        if param_dim > 0:
+            p_spt = x_spt[:,-param_dim:]
+            p_qry = x_qry[:,-param_dim:]
+            x_spt = x_spt[:,:-param_dim]
+            x_qry = x_qry[:,:-param_dim]
+        else:
+            p_spt = task_num * [None]
+            p_qry = task_num * [None]
         losses = [0.0 for _ in range(self.update_step_test + 1)]
 
         # 1. run the i-th task and compute loss for k=0
-        logits = net(x_spt, vars=net.parameters(), bn_training=True)
+        logits = net(x_spt, vars=net.parameters(), bn_training=True, param_tensor=p_spt)
         loss = F.mse_loss(logits, y_spt)
         grad = torch.autograd.grad(loss, filter(lambda p: p.requires_grad, net.parameters())) #line 6 in alg
-        fast_weights = list(net.parameters())[:-2] + list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, filter(lambda p: p.requires_grad, net.parameters()))))
+        fast_weights = list(net.parameters())[:(-1)*num_tuned_layers] + list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, filter(lambda p: p.requires_grad, net.parameters()))))
         # loss before first update
         with torch.no_grad():
-            logits_q = net(x_qry, net.parameters(), bn_training=True)
+            logits_q = net(x_qry, net.parameters(), bn_training=True, param_tensor=p_qry)
             loss_q = F.mse_loss(logits_q, y_qry)
             losses[0] += loss_q
 
         # loss after the first update
         with torch.no_grad():
-            logits_q = net(x_qry, fast_weights, bn_training=True)
+            logits_q = net(x_qry, fast_weights, bn_training=True, param_tensor=p_qry)
             loss_q = F.mse_loss(logits_q, y_qry)
             losses[1] += loss_q
 
         for k in range(1, self.update_step_test):
             # 1. run the i-th task and compute loss for k=1~K-1
-            logits = net(x_spt, fast_weights, bn_training=True)
+            logits = net(x_spt, fast_weights, bn_training=True, param_tensor=p_spt)
             loss = F.mse_loss(logits, y_spt)
             # 2. compute grad on theta_pi
             grad = torch.autograd.grad(loss, filter(lambda p: p.requires_grad, fast_weights)) #line 6 in alg
-            fast_weights = list(net.parameters())[:-2] + list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, filter(lambda p: p.requires_grad, fast_weights))))
+            fast_weights = list(net.parameters())[:(-1)*num_tuned_layers] + list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, filter(lambda p: p.requires_grad, fast_weights))))
 
-            logits_q = net(x_qry, fast_weights, bn_training=True)
+            logits_q = net(x_qry, fast_weights, bn_training=True, param_tensor=p_qry)
             loss_q = F.mse_loss(logits_q, y_qry)
             losses[k + 1] += loss_q
 
         return np.array(losses)/x_qry.size(0), net, fast_weights
 
-    def finetunning(self, x_spt, y_spt, x_qry, y_qry):
-        """
-
-        :param x_spt:   [setsz, c_, h, w]
-        :param y_spt:   [setsz]
-        :param x_qry:   [querysz, c_, h, w]
-        :param y_qry:   [querysz]
-        :return:
-        """
-
-        querysz = x_qry.size(0)
-
-        losses = [0.0 for _ in range(self.update_step_test + 1)]
-
-        net = deepcopy(self.net)
-
-        # 1. run the i-th task and compute loss for k=0
-        logits = net(x_spt, net.parameters())
-        loss = F.mse_loss(logits, y_spt)
-        grad = torch.autograd.grad(loss, net.parameters())
-        fast_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, net.parameters())))
-
-        # loss before first update
-        with torch.no_grad():
-            logits_q = net(x_qry, net.parameters(), bn_training=True)
-            loss = F.mse_loss(logits_q, y_qry)
-            losses[0] = loss
-
-        # loss after the first update
-        with torch.no_grad():
-            logits_q = net(x_qry, fast_weights, bn_training=True)
-            loss = F.mse_loss(logits_q, y_qry)
-            losses[1] = loss
-
-        for k in range(1, self.update_step_test):
-            # 1. run the i-th task and compute loss for k=1~K-1
-            logits = net(x_spt, fast_weights, bn_training=True)
-            loss = F.mse_loss(logits, y_spt)
-            # 2. compute grad on theta_pi
-            grad = torch.autograd.grad(loss, fast_weights)
-            # 3. theta_pi = theta_pi - train_lr * grad
-            fast_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, fast_weights)))
-
-            logits_q = net(x_qry, fast_weights, bn_training=True)
-            # loss_q will be overwritten and just keep the loss_q on last update step.
-            loss_q = F.mse_loss(logits_q, y_qry)
-            losses[k + 1] = loss_q
-
-        del net
-
-        #accs = np.array(losses) / querysz
-
-        return losses #accs
 
 def main():
     pass

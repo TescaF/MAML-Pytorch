@@ -12,14 +12,17 @@ from    torch.nn import functional as F
 from copy import deepcopy
 import itertools
 from meta import Meta
+from categorized_grasps import CategorizedGrasps
 
 def main(args):
 
-    sinusoid = {'name':'sinusoid','class':Sinusoid, 'dims':[1,1]}
-    polynomial = {'name':'polynomial', 'class':Polynomial, 'dims':[2,1]}
-    imagenet = {'name':'imagenet', 'class':ImageNet, 'dims':[4096,2]}
-    grasps = {'name':'grasps', 'class':CornellGrasps, 'dims':[4096,2]}
-    data_params = {'sinusoid':sinusoid, 'polynomial':polynomial, 'imagenet':imagenet, 'grasps':grasps}
+    sinusoid = {'name':'sinusoid','class':Sinusoid, 'dims':[1,1,0]}
+    polynomial = {'name':'polynomial', 'class':Polynomial, 'dims':[2,1,0]}
+    imagenet = {'name':'imagenet', 'class':ImageNet, 'dims':[4096,2,0]}
+    grasps = {'name':'grasps', 'class':CornellGrasps, 'dims':[4096,2,0]}
+    cat_grasps = {'name':'cat_grasps-1_grasp', 'class':CategorizedGrasps, 'dims':[4096,2,1]} #third number is param length
+    data_params = {'sinusoid':sinusoid, 'polynomial':polynomial, 'imagenet':imagenet, 'grasps':grasps, 'cat':cat_grasps}
+
     func_data = data_params[args.func_type]
 
     last_epoch = 1000
@@ -44,9 +47,13 @@ def main(args):
     device = torch.device('cuda')
     torch.cuda.synchronize()
 
-    dim_hidden = [4096,500]
+    #dim_hidden = [4096,500]
+    dim_hidden = [4096,[512,513], 128]
+
     #dim_hidden = [40,40]
-    dim_input, dim_output = func_data['dims']
+    dims = func_data['dims']
+
+    #dim_input, dim_output = func_data['dims']
 
     '''config = [
         ('fc', [dim_hidden[0], dim_input]),
@@ -64,19 +71,27 @@ def main(args):
         #('relu', [True])] #,
         #('bn', [dim_output])]'''
 
-    config = [ 
-        ('linear', [dim_hidden[0], dim_input]),
+    config = [
+        ('linear', [dim_hidden[0], dims[0]]),
         ('relu', [True]),
         ('bn', [dim_hidden[0]])]
-    
-    for i in range(1, len(dim_hidden)): 
+    prev_dim = dim_hidden[0]
+    for i in range(1, len(dim_hidden)):
+        if type(dim_hidden[i]) == list:
+            curr_dim = dim_hidden[i][0]
+        else:
+            curr_dim = dim_hidden[i]
         config += [
-            ('linear', [dim_hidden[i], dim_hidden[i-1]]),
+            ('linear', [curr_dim, prev_dim]),
             ('relu', [True]),
-            ('bn', [dim_hidden[i]])]
+            ('bn', [curr_dim])]
+        if type(dim_hidden[i]) == list:
+            prev_dim = dim_hidden[i][1]
+        else:
+            prev_dim = curr_dim
 
     config += [
-        ('linear', [dim_output, dim_hidden[-1]])]
+        ('linear', [dims[1], prev_dim])]
 
 
     mod = Meta(args, config, func_data['dims']).to(device)
@@ -96,7 +111,8 @@ def main(args):
     db_train = func_data['class'](
                        batchsz=args.task_num,
                        k_shot=args.k_spt,
-                       k_qry=args.k_qry)
+                       k_qry=args.k_qry,
+                       num_grasps=args.grasps)
 
     all_accs = []
     batch_x, batch_y = db_train.next()
@@ -117,9 +133,9 @@ def main(args):
         while len(c_idx) >= args.batch_sz: #% args.batch_sz == 0:
             if args.iter_qry == 1:
                 if args.al_method == "random":
-                    s_idx = al_method_random(c_idx)
+                    s_idx = al_method_random(c_idx, args.batch_sz)
                 if args.al_method == "k_centers":
-                    s_idx = al_method_k_centers(curr_mod, tuned_w, c_data, c_idx, t_data, args.batch_sz)
+                    s_idx = al_method_k_centers(curr_mod, tuned_w, c_data, c_idx, t_data, dims[2], args.batch_sz)
                     del curr_mod
                 inputa, labela = [], []
                 for b in s_idx:
@@ -149,7 +165,7 @@ def main(args):
                 ql = batch_y[i, :args.k_spt, :]
                 c_idx = []
             qin, ql = torch.from_numpy(qin).float().to(device), torch.from_numpy(ql).float().to(device)
-            test_acc, curr_mod, tuned_w = mod.finetuning(qin, ql, q_set[0], q_set[1])
+            test_acc, curr_mod, tuned_w = mod.finetuning(qin, ql, q_set[0], q_set[1], dims[2], args.tuned_layers)
             if len(accs) == 0:
                 accs.append(test_acc[0])
             accs.append( test_acc[-1] )
@@ -157,19 +173,26 @@ def main(args):
                 pdb.set_trace()
         if args.iter_qry == 1:
             all_accs.append(accs)
+            #all_accs.append(np.array(accs))
         else:
             all_accs.append(test_acc)
     accs_val = np.array(all_accs).mean(axis=0).astype(np.float16)
     print('\nLoss:', accs_val)
 
-def al_method_random(avail_cand_idx):
-    return avail_cand_idx[random.randint(0, len(avail_cand_idx) - 1)]
+def al_method_random(avail_cand_idx, req_count=1):
+    #idxs = np.random.randint(0, len(avail_cand_idx), req_count)
+    idxs = np.random.choice(len(avail_cand_idx), req_count, replace=False)
+    c = []
+    for i in idxs:
+        c.append(avail_cand_idx[i])
+    return c
 
-def al_method_k_centers(mod, tuned_w, cand_data, avail_cand_idx, target_data, req_count = 1):
+def al_method_k_centers(mod, tuned_w, cand_data, avail_cand_idx, target_data, param_dim, req_count = 1):
     if tuned_w is None:
         tuned_w = mod.parameters()
-    cand_ests = mod(cand_data, vars = tuned_w)
-    tgt_ests = mod(target_data, vars = tuned_w)
+    cand_ests = mod(cand_data[:,:-param_dim], vars = tuned_w, param_tensor=cand_data[:,-param_dim:])
+    tgt_ests = mod(target_data[:,:-param_dim], vars = tuned_w, param_tensor=target_data[:,-param_dim:])
+    #tgt_ests = mod(target_data, vars = tuned_w)
     '''x = labeled_query[0]
     y = labeled_query[1]
     cand_ests[x] = y
@@ -214,6 +237,8 @@ if __name__ == '__main__':
     argparser.add_argument('--func_type', type=str, help='function type', default="sinusoid")
     argparser.add_argument('--svm_lr', type=float, help='task-level inner update learning rate', default=0.001)
     argparser.add_argument('--batch_sz', type=int, help='task-level inner update learning rate', default=1)
+    argparser.add_argument('--grasps', type=int, help='number of grasps per object sample', default=1)
+    argparser.add_argument('--tuned_layers', type=int, help='number of grasps per object sample', default=2)
 
     args = argparser.parse_args()
 

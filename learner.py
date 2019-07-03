@@ -149,7 +149,7 @@ class Learner(nn.Module):
 
 
 
-    def forward(self, x, vars=None, bn_training=True):
+    def forward(self, x, vars=None, bn_training=True, param_tensor=None):
         """
         This function can be called by finetunning, however, in finetunning, we dont wish to update
         running_mean/running_var. Thought weights/bias of bn is updated, it has been separated by fast_weights.
@@ -168,6 +168,8 @@ class Learner(nn.Module):
         bn_idx = 0
 
         for name, param in self.config:
+            if not vars[idx].shape[-1] == x.shape[-1]:
+                x = torch.cat((x, param_tensor),1)
             if name is 'conv2d':
                 w, b = vars[idx], vars[idx + 1]
                 # remember to keep synchrozied of forward_encoder and forward_decoder!

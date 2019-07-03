@@ -6,6 +6,7 @@ from sinusoid import Sinusoid
 from polynomial import Polynomial
 from imagenet import ImageNet
 from cornell_grasps import CornellGrasps
+from categorized_grasps import CategorizedGrasps
 import  argparse
 
 from    meta import Meta
@@ -13,11 +14,12 @@ from    meta import Meta
 
 def main(args):
 
-    sinusoid = {'name':'sinusoid','class':Sinusoid, 'dims':[1,1]}
-    polynomial = {'name':'polynomial', 'class':Polynomial, 'dims':[2,1]}
-    imagenet = {'name':'imagenet', 'class':ImageNet, 'dims':[4096,2]}
-    grasps = {'name':'grasps', 'class':CornellGrasps, 'dims':[4096,2]}
-    data_params = {'sinusoid':sinusoid, 'polynomial':polynomial, 'imagenet':imagenet, 'grasps':grasps}
+    sinusoid = {'name':'sinusoid','class':Sinusoid, 'dims':[1,1,0]}
+    polynomial = {'name':'polynomial', 'class':Polynomial, 'dims':[2,1,0]}
+    imagenet = {'name':'imagenet', 'class':ImageNet, 'dims':[4096,2,0]}
+    grasps = {'name':'grasps', 'class':CornellGrasps, 'dims':[4096,2,0]}
+    cat_grasps = {'name':'cat_grasps', 'class':CategorizedGrasps, 'dims':[4096,2,1]} #third number is param length
+    data_params = {'sinusoid':sinusoid, 'polynomial':polynomial, 'imagenet':imagenet, 'grasps':grasps, 'cat':cat_grasps}
     func_data = data_params[args.func_type]
 
     save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_epoch'
@@ -31,9 +33,10 @@ def main(args):
 
     print(args)
 
-    dim_hidden = [4096,500]
+    dim_hidden = [4096,[512,513], 128]
+    #dim_hidden = [4096,500]
     #dim_hidden = [40,40]
-    dim_input, dim_output = func_data['dims']
+    dims = func_data['dims']
 
     '''
     config = [
@@ -44,7 +47,7 @@ def main(args):
     for i in range(1, len(dim_hidden)):
         config += [
             ('fc', [dim_hidden[i], dim_hidden[i-1]]),
-            ('relu', [True])] #,
+            ('relu', [True])] #,, 'cat':cat_grasps
             #('bn', [dim_hidden[i]])]
 
     config += [
@@ -55,18 +58,26 @@ def main(args):
 
 
     config = [
-        ('linear', [dim_hidden[0], dim_input]),
+        ('linear', [dim_hidden[0], dims[0]]),
         ('relu', [True]),
         ('bn', [dim_hidden[0]])]
-
+    prev_dim = dim_hidden[0]
     for i in range(1, len(dim_hidden)):
+        if type(dim_hidden[i]) == list:
+            curr_dim = dim_hidden[i][0]
+        else:
+            curr_dim = dim_hidden[i]
         config += [
-            ('linear', [dim_hidden[i], dim_hidden[i-1]]),
+            ('linear', [curr_dim, prev_dim]),
             ('relu', [True]),
-            ('bn', [dim_hidden[i]])]
+            ('bn', [curr_dim])]
+        if type(dim_hidden[i]) == list:
+            prev_dim = dim_hidden[i][1]
+        else:
+            prev_dim = curr_dim
 
     config += [
-        ('linear', [dim_output, dim_hidden[-1]])] 
+        ('linear', [dims[1], prev_dim])] 
 
 
 
@@ -83,25 +94,26 @@ def main(args):
     db_train = func_data['class'](
                        batchsz=args.task_num,
                        k_shot=args.k_spt,
-                       k_qry=args.k_qry)
+                       k_qry=args.k_qry,
+                       num_grasps=args.grasps)
 
     prelosses, postlosses = [], []
     # epoch: number of training batches
     for step in range(args.epoch):
         #start = time.time()
         batch_x, batch_y = db_train.next()
-        inputa = batch_x[:, :args.k_spt, :]
-        labela = batch_y[:, :args.k_spt, :]
+        inputa = batch_x[:, :args.k_spt*args.grasps, :]
+        labela = batch_y[:, :args.k_spt*args.grasps, :]
         if args.k_spt == 1:
             inputa = np.array(inputa) #np.concatenate([inputa, inputa], axis=1)     
             labela = np.array(labela) #np.concatenate([labela, labela], axis=1)     
-        labelb = batch_y[:,args.k_spt:, :]
-        inputb = batch_x[:,args.k_spt:, :]
+        labelb = batch_y[:,args.k_spt*args.grasps:, :]
+        inputb = batch_x[:,args.k_spt*args.grasps:, :]
 
         x_spt, y_spt, x_qry, y_qry = torch.from_numpy(inputa).float().to(device), torch.from_numpy(labela).float().to(device), \
                                      torch.from_numpy(inputb).float().to(device), torch.from_numpy(labelb).float().to(device)
 
-        accs = maml(x_spt, y_spt, x_qry, y_qry)
+        accs = maml(x_spt, y_spt, x_qry, y_qry, dims[2], args.tuned_layers)
         #accs, svm_loss = maml(x_spt, y_spt, x_qry, y_qry)
         #time_diff = time.time() - start
         #print(time_diff)
@@ -137,7 +149,9 @@ if __name__ == '__main__':
     argparser.add_argument('--update_step_test', type=int, help='update steps for finetunning', default=10)
     argparser.add_argument('--func_type', type=str, help='function type', default="sinusoid")
     argparser.add_argument('--svm_lr', type=float, help='task-level inner update learning rate', default=0.001)
-    
+    argparser.add_argument('--grasps', type=int, help='number of grasps per object sample', default=1)
+    argparser.add_argument('--tuned_layers', type=int, help='number of grasps per object sample', default=2)
+ 
 
     args = argparser.parse_args()
 
