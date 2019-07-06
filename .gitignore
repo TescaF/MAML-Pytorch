@@ -3,4 +3,5 @@ miniimagenet
 omniglot
 .idea
 *.swp
+data/*
 __pycache__

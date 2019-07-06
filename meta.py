@@ -112,13 +112,21 @@ class Meta(nn.Module):
         return np.array(losses_q) / task_num #, svm_loss_total
         #return accs
 
-    def finetuning(self, x_spt, y_spt, x_qry, y_qry, param_dim, num_tuned_layers):
+    def finetuning(self, x_spt, y_spt, x_qry, y_qry, param_dim, num_tuned_layers, new_env=False):
         net = deepcopy(self.net)
-        ## Freeze all layers except the last one
-        for p in net.parameters():
-            p.requires_grad = False
-        for i in range(num_tuned_layers):
-            list(net.parameters())[(-1) * (i+1)].requires_grad = True
+        if new_env:
+            for p in net.parameters():
+                p.requires_grad = True
+            #for i in range(num_tuned_layers):
+            #    list(net.parameters())[(-1) * (i+1)].requires_grad = False
+            #stuck_layers = list(net.parameters())[(-1)*num_tuned_layers:]
+        else:
+            ## Freeze all layers except the last one
+            for p in net.parameters():
+                p.requires_grad = False
+            for i in range(num_tuned_layers):
+                list(net.parameters())[(-1) * (i+1)].requires_grad = True
+            stuck_layers = list(net.parameters())[:(-1)*num_tuned_layers]
 
         task_num = x_spt.size(0)
         if param_dim > 0:
@@ -135,7 +143,10 @@ class Meta(nn.Module):
         logits = net(x_spt, vars=net.parameters(), bn_training=True, param_tensor=p_spt)
         loss = F.mse_loss(logits, y_spt)
         grad = torch.autograd.grad(loss, filter(lambda p: p.requires_grad, net.parameters())) #line 6 in alg
-        fast_weights = list(net.parameters())[:(-1)*num_tuned_layers] + list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, filter(lambda p: p.requires_grad, net.parameters()))))
+        if new_env:
+            fast_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, net.parameters())))
+        else:
+            fast_weights = list(net.parameters())[:(-1)*num_tuned_layers] + list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, filter(lambda p: p.requires_grad, net.parameters()))))
         # loss before first update
         with torch.no_grad():
             logits_q = net(x_qry, net.parameters(), bn_training=True, param_tensor=p_qry)
@@ -154,13 +165,20 @@ class Meta(nn.Module):
             loss = F.mse_loss(logits, y_spt)
             # 2. compute grad on theta_pi
             grad = torch.autograd.grad(loss, filter(lambda p: p.requires_grad, fast_weights)) #line 6 in alg
-            fast_weights = list(net.parameters())[:(-1)*num_tuned_layers] + list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, filter(lambda p: p.requires_grad, fast_weights))))
+            if new_env:
+                fast_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, fast_weights)))
+            else:
+                fast_weights = list(net.parameters())[:(-1)*num_tuned_layers] + list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, filter(lambda p: p.requires_grad, fast_weights))))
 
             logits_q = net(x_qry, fast_weights, bn_training=True, param_tensor=p_qry)
             loss_q = F.mse_loss(logits_q, y_qry)
             losses[k + 1] += loss_q
+            del grad
+            torch.cuda.empty_cache()
 
-        return np.array(losses)/x_qry.size(0), net, fast_weights
+        del net
+        torch.cuda.empty_cache()
+        return np.array(losses)/x_qry.size(0), fast_weights
 
 
 def main():

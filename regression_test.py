@@ -26,13 +26,31 @@ def main(args):
     func_data = data_params[args.func_type]
 
     last_epoch = 1000
-    save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_model) + '_stepsz' + str(args.update_lr) + '_epoch' + str(last_epoch) + '.pt'
+    if args.split_cat == 1:
+        save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_model) + '_stepsz' + str(args.update_lr) + 'split-cat_epoch' + str(last_epoch) + '.pt'
+    else:
+        save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_model) + '_stepsz' + str(args.update_lr) + 'split-obj_epoch' + str(last_epoch) + '.pt'
+
+    #save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_model) + '_stepsz' + str(args.update_lr) + '_epoch' + str(last_epoch) + '.pt'
     while os.path.isfile(save_path):
         valid_epoch = last_epoch
         last_epoch += 1000
-        save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_model) + '_stepsz' + str(args.update_lr) + '_epoch' + str(last_epoch) + '.pt'
-    save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_model) + '_stepsz' + str(args.update_lr) + '_epoch' + str(valid_epoch) + '.pt'
+        #save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_model) + '_stepsz' + str(args.update_lr) + '_epoch' + str(last_epoch) + '.pt'
+        if args.split_cat == 1:
+            save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_model) + '_stepsz' + str(args.update_lr) + 'split-cat_epoch' + str(last_epoch) + '.pt'
+        else:
+            save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_model) + '_stepsz' + str(args.update_lr) + 'split-obj_epoch' + str(last_epoch) + '.pt'
 
+    #save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_model) + '_stepsz' + str(args.update_lr) + '_epoch' + str(valid_epoch) + '.pt'
+
+    ##TEMP##
+    valid_epoch=100000
+    if args.split_cat == 1:
+        save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_model) + '_stepsz' + str(args.update_lr) + 'split-cat_epoch' + str(valid_epoch) + '.pt'
+    else:
+        save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_model) + '_stepsz' + str(args.update_lr) + 'split-obj_epoch' + str(valid_epoch) + '.pt'
+
+    #pdb.set_trace()
     torch.cuda.synchronize()
     torch.manual_seed(222)
     torch.cuda.synchronize()
@@ -133,16 +151,17 @@ def main(args):
         t_data = q_set[0]
         s_idx = None
         tuned_w = None
-        curr_mod = deepcopy(mod.net)
+        #curr_mod = deepcopy(mod.net)
         while len(c_idx) >= args.batch_sz: #% args.batch_sz == 0:
             if args.iter_qry == 1:
                 if args.al_method == "random":
                     s_idx = al_method_random(c_idx, args.batch_sz)
                 if args.al_method == "k_centers":
-                    s_idx = al_method_k_centers(curr_mod, tuned_w, c_data, c_idx, t_data, dims[2], args.batch_sz, output_dist=True)
+                    s_idx = al_method_k_centers(mod.net, tuned_w, c_data, c_idx, t_data, dims[2], args.batch_sz, output_dist=True)
                 if args.al_method == "input_space":
-                    s_idx = al_method_k_centers(curr_mod, tuned_w, c_data, c_idx, t_data, dims[2], args.batch_sz, output_dist=False)
-                    del curr_mod
+                    s_idx = al_method_k_centers(mod.net, tuned_w, c_data, c_idx, t_data, dims[2], args.batch_sz, output_dist=False)
+                    #del curr_mod
+                    #torch.cuda.empty_cache()
                 inputa, labela = [], []
                 for b in s_idx:
                     inputa.append(batch_x[i,b,:])
@@ -171,13 +190,14 @@ def main(args):
                 ql = batch_y[i, :args.k_spt, :]
                 c_idx = []
             qin, ql = torch.from_numpy(qin).float().to(device), torch.from_numpy(ql).float().to(device)
-            test_acc, curr_mod, tuned_w = mod.finetuning(qin, ql, q_set[0], q_set[1], dims[2], args.tuned_layers)
+            test_acc, tuned_w = mod.finetuning(qin, ql, q_set[0], q_set[1], dims[2], args.tuned_layers,new_env=(args.split_cat==0))
             if len(accs) == 0:
                 accs.append(test_acc[0])
             accs.append( test_acc[-1] )
             if np.isnan(test_acc[-1].cpu().detach().numpy()):
                 pdb.set_trace()
         if args.iter_qry == 1:
+            #pdb.set_trace()
             all_accs.append(accs)
             #all_accs.append(np.array(accs))
         else:
