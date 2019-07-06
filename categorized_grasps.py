@@ -14,7 +14,7 @@ import pickle
 
 class CategorizedGrasps:
 
-    def __init__(self, batchsz, k_shot, k_qry, num_grasps):
+    def __init__(self, batchsz, k_shot, k_qry, num_grasps, split, train, split_cat):
         """
         :param batchsz: task num
         :param k_shot: number of samples for fine-tuning
@@ -23,7 +23,16 @@ class CategorizedGrasps:
         """
         fts_loc = "/home/tesca/data/cornell_grasps/all_fts.pkl"
         out_loc = "/home/tesca/data/cornell_grasps/all_outs.pkl"
-        cat_loc = "/home/tesca/data/cornell_grasps/all_cats.pkl"
+        if train:
+            if split_cat == 1:
+                cat_loc = "/home/tesca/data/cornell_grasps/train_cat_categories-" + str(split) + ".pkl"
+            else:
+                cat_loc = "/home/tesca/data/cornell_grasps/train_obj_categories-" + str(split) + ".pkl"
+        else:
+            if split_cat == 1:
+                cat_loc = "/home/tesca/data/cornell_grasps/test_cat_categories-" + str(split) + ".pkl"
+            else:
+                cat_loc = "/home/tesca/data/cornell_grasps/test_obj_categories-" + str(split) + ".pkl"
 
         with open(fts_loc, 'rb') as handle:
             self.inputs = pickle.load(handle)       #dict(img) = [[4096x1], ... ]
@@ -32,13 +41,15 @@ class CategorizedGrasps:
         with open(cat_loc, 'rb') as handle:
             self.categories = pickle.load(handle)   #dict(category) = [img1, img2, ...]
 
-
         self.batch_size = batchsz
         self.num_grasps_per_sample = num_grasps
         self.dim_input = 4096
         self.dim_output = 2#self.outputs[0].shape[0]-1 #self.dataset[1].shape[0]
         self.dim_params = 1
-        print(str(len(self.inputs.keys())) + " samples loaded (Dims " + str(self.dim_input) + "x" + str(self.dim_output) + ")")
+        print(str(len(self.categories.keys())) + " categories loaded")
+        print(str(len(np.unique(sum(self.categories.values(),[])))) + " objects loaded")
+        print("Dims " + str(self.dim_input) + "x" + str(self.dim_output))
+        #print(str(len(self.inputs.keys())) + " samples loaded (Dims " + str(self.dim_input) + "x" + str(self.dim_output) + ")")
 
         self.num_samples_per_class = k_shot + k_qry 
 

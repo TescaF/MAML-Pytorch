@@ -22,7 +22,10 @@ def main(args):
     data_params = {'sinusoid':sinusoid, 'polynomial':polynomial, 'imagenet':imagenet, 'grasps':grasps, 'cat':cat_grasps}
     func_data = data_params[args.func_type]
 
-    save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_epoch'
+    if args.split_cat == 1:
+        save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + 'split-cat_epoch'
+    else:
+        save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + 'split-obj_epoch'
 
     torch.cuda.synchronize()
     torch.manual_seed(222)
@@ -95,7 +98,10 @@ def main(args):
                        batchsz=args.task_num,
                        k_shot=args.k_spt,
                        k_qry=args.k_qry,
-                       num_grasps=args.grasps)
+                       num_grasps=args.grasps,
+                       split=args.split,
+                       train=True,
+                       split_cat=args.split_cat)
 
     prelosses, postlosses = [], []
     # epoch: number of training batches
@@ -151,6 +157,8 @@ if __name__ == '__main__':
     argparser.add_argument('--svm_lr', type=float, help='task-level inner update learning rate', default=0.001)
     argparser.add_argument('--grasps', type=int, help='number of grasps per object sample', default=1)
     argparser.add_argument('--tuned_layers', type=int, help='number of grasps per object sample', default=2)
+    argparser.add_argument('--split', type=float, help='training/testing data split', default=0.5)
+    argparser.add_argument('--split_cat', type=int, help='1 if training/testing data is split by category, 0 if split by object id', default=1)
  
 
     args = argparser.parse_args()

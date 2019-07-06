@@ -20,18 +20,18 @@ def main(args):
     polynomial = {'name':'polynomial', 'class':Polynomial, 'dims':[2,1,0]}
     imagenet = {'name':'imagenet', 'class':ImageNet, 'dims':[4096,2,0]}
     grasps = {'name':'grasps', 'class':CornellGrasps, 'dims':[4096,2,0]}
-    cat_grasps = {'name':'cat_grasps-1_grasp', 'class':CategorizedGrasps, 'dims':[4096,2,1]} #third number is param length
+    cat_grasps = {'name':'cat_grasps', 'class':CategorizedGrasps, 'dims':[4096,2,1]} #third number is param length
     data_params = {'sinusoid':sinusoid, 'polynomial':polynomial, 'imagenet':imagenet, 'grasps':grasps, 'cat':cat_grasps}
 
     func_data = data_params[args.func_type]
 
     last_epoch = 1000
-    save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_epoch' + str(last_epoch) + '.pt'
+    save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_model) + '_stepsz' + str(args.update_lr) + '_epoch' + str(last_epoch) + '.pt'
     while os.path.isfile(save_path):
         valid_epoch = last_epoch
         last_epoch += 1000
-        save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_epoch' + str(last_epoch) + '.pt'
-    save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_epoch' + str(valid_epoch) + '.pt'
+        save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_model) + '_stepsz' + str(args.update_lr) + '_epoch' + str(last_epoch) + '.pt'
+    save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_model) + '_stepsz' + str(args.update_lr) + '_epoch' + str(valid_epoch) + '.pt'
 
     torch.cuda.synchronize()
     torch.manual_seed(222)
@@ -112,7 +112,11 @@ def main(args):
                        batchsz=args.task_num,
                        k_shot=args.k_spt,
                        k_qry=args.k_qry,
-                       num_grasps=args.grasps)
+                       num_grasps=args.grasps,
+                       split=args.split,
+                       train=False,
+                       split_cat=args.split_cat)
+
 
     all_accs = []
     batch_x, batch_y = db_train.next()
@@ -135,7 +139,9 @@ def main(args):
                 if args.al_method == "random":
                     s_idx = al_method_random(c_idx, args.batch_sz)
                 if args.al_method == "k_centers":
-                    s_idx = al_method_k_centers(curr_mod, tuned_w, c_data, c_idx, t_data, dims[2], args.batch_sz)
+                    s_idx = al_method_k_centers(curr_mod, tuned_w, c_data, c_idx, t_data, dims[2], args.batch_sz, output_dist=True)
+                if args.al_method == "input_space":
+                    s_idx = al_method_k_centers(curr_mod, tuned_w, c_data, c_idx, t_data, dims[2], args.batch_sz, output_dist=False)
                     del curr_mod
                 inputa, labela = [], []
                 for b in s_idx:
@@ -187,22 +193,18 @@ def al_method_random(avail_cand_idx, req_count=1):
         c.append(avail_cand_idx[i])
     return c
 
-def al_method_k_centers(mod, tuned_w, cand_data, avail_cand_idx, target_data, param_dim, req_count = 1):
+def al_method_k_centers(mod, tuned_w, cand_data, avail_cand_idx, target_data, param_dim, req_count = 1, output_dist=True):
     if tuned_w is None:
         tuned_w = mod.parameters()
     cand_ests = mod(cand_data[:,:-param_dim], vars = tuned_w, param_tensor=cand_data[:,-param_dim:])
     tgt_ests = mod(target_data[:,:-param_dim], vars = tuned_w, param_tensor=target_data[:,-param_dim:])
-    #tgt_ests = mod(target_data, vars = tuned_w)
-    '''x = labeled_query[0]
-    y = labeled_query[1]
-    cand_ests[x] = y
-    if args.merge_spt_qry == 1:
-        tgt_ests[x] = y'''
-
     dists = np.ones((cand_data.shape[0], target_data.shape[0]))
     for i in range(cand_data.shape[0]):
         for j in range(target_data.shape[0]):
-            dists[i, j] = F.mse_loss(cand_ests[i], tgt_ests[j])
+            if output_dist:
+                dists[i, j] = F.mse_loss(cand_ests[i], tgt_ests[j])
+            else:
+                dists[i, j] = F.mse_loss(cand_data[i], target_data[j])
 
     labeled_cands = np.setdiff1d(range(cand_data.shape[0]), avail_cand_idx)
     max_min_dists = []
@@ -239,6 +241,9 @@ if __name__ == '__main__':
     argparser.add_argument('--batch_sz', type=int, help='task-level inner update learning rate', default=1)
     argparser.add_argument('--grasps', type=int, help='number of grasps per object sample', default=1)
     argparser.add_argument('--tuned_layers', type=int, help='number of grasps per object sample', default=2)
+    argparser.add_argument('--split', type=float, help='training/testing data split', default=0.5)
+    argparser.add_argument('--split_cat', type=int, help='1 if training/testing data is split by category, 0 if split by object id', default=1)
+
 
     args = argparser.parse_args()
 

@@ -15,15 +15,50 @@ import pickle
 
 class ImageNetData:
 
-    def __init__(self):
-        self.prefixes = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10"]
+    def __init__(self, training_percent):
         self.base_dir = "/home/tesca/data/cornell_grasps/"
         self.dim_input = 4096
         self.ex_count = 2
+        self.trp = training_percent
+
+    def train_test_split(self, cats, objs):
+        train_cat = dict() #training set of categories across all objects
+        test_cat = dict()  #test set of categories across all objects
+        train_obj = dict() #training set of objects across all categories
+        test_obj = dict()  #test set of objects across all categories
+        train_obj_count = 0
+        test_obj_count = 0
+
+        # Split data by category
+        k = list(cats.keys())
+        tr_idx = int(math.ceil(self.trp * float(len(k))))
+        for tr_k in k[:tr_idx]:
+            train_cat[tr_k] = cats[tr_k]
+        for ts_k in k[tr_idx:]:
+            test_cat[ts_k] = cats[ts_k]
+
+        # Split data by object id
+        for ki in k:
+            unique_objs = np.unique(objs[ki])
+            tr_idx = int(math.ceil(self.trp * float(len(unique_objs))))
+            if len(unique_objs) - tr_idx > 0:
+                train_obj_count += tr_idx
+                test_obj_count += (len(unique_objs) - tr_idx)
+                train_obj[ki] = [] 
+                test_obj[ki] = [] 
+                for j in range(len(cats[ki])):
+                    if objs[ki][j] in unique_objs[:tr_idx]:
+                        train_obj[ki].append(cats[ki][j])
+                    else:
+                        test_obj[ki].append(cats[ki][j])
+        print("Categories train/test: " + str(len(train_cat.keys())) + "/" + str(len(test_cat.keys())))
+        print("Objects train/test: " + str(train_obj_count) + "/" + str(test_obj_count))
+        return train_cat, test_cat, train_obj, test_obj
 
     def load_categories(self):
         zfile = self.base_dir + "/processed/z.txt"
         cats = dict()
+        objs = dict()
         with open(zfile) as f:
             lines = [l.rstrip('\n').split() for l in f]
             prev_img = None
@@ -31,14 +66,16 @@ class ImageNetData:
                 img = l[0] #image id
                 oid = l[1] #object id
                 key = l[2] #category desc
-                if img == prev_img:
+                if img == prev_img: # or not (img[:2] in self.prefixes):
                     continue
                 prev_img = img
                 if key in cats:
                     cats[key] += [img]
+                    objs[key] += [oid]
                 else:
                     cats[key] = [img]
-        return cats
+                    objs[key] = [oid]
+        return cats, objs
 
     def load_grasps(self, cats):
         dims = dict()
@@ -105,13 +142,22 @@ class ImageNetData:
         return embedding.numpy()
 
 if __name__ == '__main__':
-    img_data = ImageNetData()
-    cats = img_data.load_categories()
+    split = 0.7
+    img_data = ImageNetData(split)
+    cats,objs = img_data.load_categories()
+    tr1, ts1, tr2, ts2 = img_data.train_test_split(cats, objs)
     outputs = img_data.load_grasps(cats)
     dataset = img_data.proc_features(outputs.keys())
     with open(img_data.base_dir + "all_fts.pkl", 'wb') as handle:
         pickle.dump(dataset, handle, protocol=pickle.HIGHEST_PROTOCOL)
     with open(img_data.base_dir + "all_outs.pkl", 'wb') as handle:
         pickle.dump(outputs, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    with open(img_data.base_dir + "all_cats.pkl", 'wb') as handle:
-        pickle.dump(cats, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+    with open(img_data.base_dir + "train_cat_categories-" + str(split) + ".pkl", 'wb') as handle:
+        pickle.dump(tr1, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    with open(img_data.base_dir + "test_cat_categories-" + str(split) + ".pkl", 'wb') as handle:
+        pickle.dump(ts1, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    with open(img_data.base_dir + "train_obj_categories-" + str(split) + ".pkl", 'wb') as handle:
+        pickle.dump(tr2, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    with open(img_data.base_dir + "test_obj_categories-" + str(split) + ".pkl", 'wb') as handle:
+        pickle.dump(ts2, handle, protocol=pickle.HIGHEST_PROTOCOL)
