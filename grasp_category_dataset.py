@@ -66,7 +66,7 @@ class ImageNetData:
                 img = l[0] #image id
                 oid = l[1] #object id
                 key = l[2] #category desc
-                if img == prev_img: # or not (img[:2] in self.prefixes):
+                if (img == prev_img) or (not path.exists(self.base_dir + str(img[:2]) + "/cropped/pcd" + str(img) + "r.png")):
                     continue
                 prev_img = img
                 if key in cats:
@@ -98,7 +98,8 @@ class ImageNetData:
                             angle = math.degrees(math.atan2(coords[0][1] - coords[1][1], coords[0][0] - coords[1][0]))
                             x = sum([c[0] for c in coords])/4.0
                             y = sum([c[1] for c in coords])/4.0
-                            grasps.append([angle, x, y])
+                            if not math.isnan(angle):
+                                grasps.append([angle, x, y])
                         else:
                             dims[i] = grasps
                             break
@@ -142,17 +143,10 @@ class ImageNetData:
         return embedding.numpy()
 
 if __name__ == '__main__':
-    split = 0.7
+    split = 0.4
     img_data = ImageNetData(split)
     cats,objs = img_data.load_categories()
     tr1, ts1, tr2, ts2 = img_data.train_test_split(cats, objs)
-    outputs = img_data.load_grasps(cats)
-    dataset = img_data.proc_features(outputs.keys())
-    with open(img_data.base_dir + "all_fts.pkl", 'wb') as handle:
-        pickle.dump(dataset, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    with open(img_data.base_dir + "all_outs.pkl", 'wb') as handle:
-        pickle.dump(outputs, handle, protocol=pickle.HIGHEST_PROTOCOL)
-
     with open(img_data.base_dir + "train_cat_categories-" + str(split) + ".pkl", 'wb') as handle:
         pickle.dump(tr1, handle, protocol=pickle.HIGHEST_PROTOCOL)
     with open(img_data.base_dir + "test_cat_categories-" + str(split) + ".pkl", 'wb') as handle:
@@ -161,3 +155,14 @@ if __name__ == '__main__':
         pickle.dump(tr2, handle, protocol=pickle.HIGHEST_PROTOCOL)
     with open(img_data.base_dir + "test_obj_categories-" + str(split) + ".pkl", 'wb') as handle:
         pickle.dump(ts2, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+    print("Saved categories. Computing grasps...")
+    outputs = img_data.load_grasps(cats)
+    with open(img_data.base_dir + "all_outs.pkl", 'wb') as handle:
+        pickle.dump(outputs, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+    print("Saved grasps. Computing features...")
+    dataset = img_data.proc_features(outputs.keys())
+    with open(img_data.base_dir + "all_fts.pkl", 'wb') as handle:
+        pickle.dump(dataset, handle, protocol=pickle.HIGHEST_PROTOCOL)
+

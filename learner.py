@@ -149,7 +149,7 @@ class Learner(nn.Module):
 
 
 
-    def forward(self, x, vars=None, bn_training=True, param_tensor=None):
+    def forward(self, x, vars=None, bn_training=True, param_tensor=None, dropout=[]):
         """
         This function can be called by finetunning, however, in finetunning, we dont wish to update
         running_mean/running_var. Thought weights/bias of bn is updated, it has been separated by fast_weights.
@@ -163,10 +163,9 @@ class Learner(nn.Module):
 
         if vars is None:
             vars = self.vars
-
+        p = 0.2
         idx = 0
         bn_idx = 0
-
         for name, param in self.config:
             if not vars[idx].shape[-1] == x.shape[-1]:
                 x = torch.cat((x, param_tensor),1)
@@ -188,6 +187,8 @@ class Learner(nn.Module):
                 idx += 2
             elif name is 'linear':
                 w, b = vars[idx], vars[idx + 1]
+                if idx in dropout:
+                    x = F.dropout(x, p=p, training=True)
                 x = F.linear(x, w, b)
                 idx += 2
                 # print('forward:', idx, x.norm().item())

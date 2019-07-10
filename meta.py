@@ -6,7 +6,6 @@ from    torch.nn import functional as F
 from    torch.utils.data import TensorDataset, DataLoader
 from    torch import optim
 import  numpy as np
-from    svm import SVM
 from    learner import Learner
 from    copy import deepcopy
 import  itertools
@@ -39,6 +38,16 @@ class Meta(nn.Module):
         #self.svm_max_iter = 10000
         #self.svm_epsilon = 0.001
 
+    def debug_memory(self):
+        import collections, gc, resource, torch
+        print('maxrss = {}'.format(
+            resource.getrusage(resource.RUSAGE_SELF).ru_maxrss))
+        tensors = collections.Counter((str(o.device), o.dtype, tuple(o.shape))
+                                      for o in gc.get_objects()
+                                      if torch.is_tensor(o))
+        for line in sorted(tensors.items()):
+            print('{}\t{}'.format(*line))
+
     def forward(self, x_spt, y_spt, x_qry, y_qry, param_dim, num_tuned_layers):
         """
 
@@ -59,7 +68,7 @@ class Meta(nn.Module):
             p_qry = task_num * [None]
         #svm_loss = 0.0
         losses_q = [0 for _ in range(self.update_step + 1)]  # losses_q[i] is the loss on step i
-        losses_list = []
+        last_loss = 0
 
         ## Freeze all layers except the last one
         for p in self.net.parameters():
@@ -79,14 +88,13 @@ class Meta(nn.Module):
             with torch.no_grad():
                 logits_q = self.net(x_qry[i], self.net.parameters(), bn_training=True, param_tensor=p_qry[i])
                 loss_q = F.mse_loss(logits_q, y_qry[i])
-                losses_q[0] += loss_q
-                losses_list.append(loss_q)
+                losses_q[0] += loss_q.data.item()
 
             # loss after the first update
             with torch.no_grad():
                 logits_q = self.net(x_qry[i], fast_weights, bn_training=True, param_tensor=p_qry[i])
                 loss_q = F.mse_loss(logits_q, y_qry[i])
-                losses_q[1] += loss_q
+                losses_q[1] += loss_q.data.item()
 
             for k in range(1, self.update_step):
                 # 1. run the i-th task and compute loss for k=1~K-1
@@ -98,14 +106,17 @@ class Meta(nn.Module):
 
                 logits_q = self.net(x_qry[i], fast_weights, bn_training=True, param_tensor=p_qry[i])
                 loss_q = F.mse_loss(logits_q, y_qry[i])
-                losses_q[k + 1] += loss_q
+                losses_q[k + 1] += loss_q.data.item()
+            last_loss += loss_q
         # sum over all losses on query set across all tasks
-        loss_q = losses_q[-1] / task_num
+        loss_q = last_loss / task_num
         # optimize theta parameters
         for p in self.net.parameters():
             p.requires_grad = True
         self.meta_optim.zero_grad()
         loss_q.backward()
+        #print([i.grad.data for i in self.meta_optim.param_groups[0]['params'] if i.grad is not None])  
+        torch.nn.utils.clip_grad_value_(self.net.parameters(), 10)
         self.meta_optim.step()
 
 
@@ -113,7 +124,9 @@ class Meta(nn.Module):
         #return accs
 
     def finetuning(self, x_spt, y_spt, x_qry, y_qry, param_dim, num_tuned_layers, new_env=False):
+        #self.debug_memory()
         net = deepcopy(self.net)
+        #self.debug_memory()
         if new_env:
             for p in net.parameters():
                 p.requires_grad = True
@@ -151,32 +164,46 @@ class Meta(nn.Module):
         with torch.no_grad():
             logits_q = net(x_qry, net.parameters(), bn_training=True, param_tensor=p_qry)
             loss_q = F.mse_loss(logits_q, y_qry)
-            losses[0] += loss_q
+            losses[0] += loss_q.data.item()
 
         # loss after the first update
         with torch.no_grad():
             logits_q = net(x_qry, fast_weights, bn_training=True, param_tensor=p_qry)
             loss_q = F.mse_loss(logits_q, y_qry)
-            losses[1] += loss_q
+            losses[1] += loss_q.data.item()
 
         for k in range(1, self.update_step_test):
             # 1. run the i-th task and compute loss for k=1~K-1
             logits = net(x_spt, fast_weights, bn_training=True, param_tensor=p_spt)
+            #print("A")
+            #self.debug_memory()
             loss = F.mse_loss(logits, y_spt)
+            #print("B")
+            #self.debug_memory()
             # 2. compute grad on theta_pi
             grad = torch.autograd.grad(loss, filter(lambda p: p.requires_grad, fast_weights)) #line 6 in alg
+            #print("C")
+            #self.debug_memory()
             if new_env:
                 fast_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, fast_weights)))
             else:
                 fast_weights = list(net.parameters())[:(-1)*num_tuned_layers] + list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, filter(lambda p: p.requires_grad, fast_weights))))
 
+            #print("D")
+            #self.debug_memory()
             logits_q = net(x_qry, fast_weights, bn_training=True, param_tensor=p_qry)
             loss_q = F.mse_loss(logits_q, y_qry)
-            losses[k + 1] += loss_q
+            losses[k + 1] += loss_q.data.item()
+            #print("E")
+            #self.debug_memory()
             del grad
+            #print("F")
+            #self.debug_memory()
             torch.cuda.empty_cache()
 
         del net
+        #self.debug_memory()
+        #print([int(losses[0]),int(losses[-1])])
         torch.cuda.empty_cache()
         return np.array(losses)/x_qry.size(0), fast_weights
 

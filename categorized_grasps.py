@@ -11,6 +11,7 @@ import torchvision.models.vgg as models
 import json
 from PIL import Image
 import pickle
+from numpy.random import RandomState
 
 class CategorizedGrasps:
 
@@ -21,6 +22,7 @@ class CategorizedGrasps:
         :param k_qry:
         :param imgsz:
         """
+        self.rand = RandomState(222)
         fts_loc = "/home/tesca/data/cornell_grasps/all_fts.pkl"
         out_loc = "/home/tesca/data/cornell_grasps/all_outs.pkl"
         if train:
@@ -52,32 +54,38 @@ class CategorizedGrasps:
         #print(str(len(self.inputs.keys())) + " samples loaded (Dims " + str(self.dim_input) + "x" + str(self.dim_output) + ")")
 
         self.num_samples_per_class = k_shot + k_qry 
+        outtxt = "Objs per category:\n"
+        for c in self.categories.keys():
+            outtxt += str(len(self.categories[c])) + ", "
+        print(outtxt)
 
     def next(self):
         outputs = np.zeros([self.batch_size, self.num_samples_per_class*self.num_grasps_per_sample, self.dim_output])
         init_inputs = np.zeros([self.batch_size, self.num_samples_per_class*self.num_grasps_per_sample, self.dim_input + self.dim_params])
-        valid_cats = []
-        for c in list(self.categories.keys()):
-            valid = False
-            for i in self.categories[c]:
-                valid = valid or (i in self.inputs)
-            if valid:
-                valid_cats.append(c)
-        tasks = np.random.randint(0, len(valid_cats), self.batch_size)
+        valid_cats = [c for c in sorted(self.categories.keys()) if len(self.categories[c]) >= self.num_samples_per_class]
+        tasks = self.rand.choice(len(valid_cats), self.batch_size, replace=False)
+        tasks = [self.categories[valid_cats[t]] for t in tasks]
+        #tasks = self.rand.randint(0, len(valid_cats), self.batch_size)
         for i in range(self.batch_size):
-            objs_in_category = [c for c in self.categories[valid_cats[tasks[i]]] if c in self.inputs]
-            samples = np.random.randint(0, len(objs_in_category), self.num_samples_per_class)
+            samples = self.rand.choice(len(tasks[i]), self.num_samples_per_class, replace=False)
+            #samples = self.rand.randint(0, len(objs_in_category), self.num_samples_per_class)
             for j in range(self.num_samples_per_class):
-                sample = objs_in_category[samples[j]]
+                sample = tasks[i][samples[j]]
                 self.grasps[sample] = [i for i in self.grasps[sample] if not all([math.isnan(x) for x in i])]
-                grasps = np.random.randint(0, len(self.grasps[sample]), self.num_grasps_per_sample)
+                grasps = self.rand.choice(len(self.grasps[sample]), self.num_grasps_per_sample, replace=True)
+                #grasps = self.rand.randint(0, len(self.grasps[sample]), self.num_grasps_per_sample)
                 base = j * self.num_grasps_per_sample
                 for g in range(self.num_grasps_per_sample):
                     grasp = self.grasps[sample][grasps[g]]
-                    val = np.tanh(math.radians(grasp[0]))
-                    if math.isnan(val):
-                        pdb.set_trace()
-                    init_inputs[i, base + g] = np.concatenate((self.inputs[sample], np.array([np.tanh(math.radians(grasp[0]))])))
+
+                    # Assuming grasps are symmetrical, transform to be within range [-pi/2, pi/2]
+                    angle = grasp[0]
+                    if angle < -90:
+                        angle += 180
+                    if angle > 90:
+                        angle -= 180
+                    angle = angle / 90 #Scale to [-1, 1]
+                    init_inputs[i, base + g] = np.concatenate((self.inputs[sample], np.array([angle])))
                     outputs[i, base + g] = grasp[1:]
         return init_inputs, outputs
 

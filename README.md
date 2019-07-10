@@ -8,7 +8,10 @@ Adapted from [MAML-Pytorch](https://github.com/dragen1860/MAML-Pytorch).
 - python: 3.x
 - Pytorch: 0.4+
 
-# Execution
+# Training
+python -u regression_train.py --grasps=5 --split=0.7 --split_cat=1 --task_num=25 --tuned_layers=6 --k_spt=5 --k_qry=5 --epoch=300000 | tee data/cat_grasps/summary_split_cat_k5.txt
+
+# Testing
 Batch baseline:
 python regression_test.py --func_type="cat" --k_spt=10 --k_qry=10 --k_model=5 --grasps=1 --tuned_layers=6 --update_step_test=30 --task_num=1000 --iter_qry=0 --split=0.7 --split_cat=0
 

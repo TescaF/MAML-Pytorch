@@ -2,10 +2,10 @@ import time
 import pdb
 import  torch, os
 import  numpy as np
-from sinusoid import Sinusoid
-from polynomial import Polynomial
-from imagenet import ImageNet
-from cornell_grasps import CornellGrasps
+#from sinusoid import Sinusoid
+#from polynomial import Polynomial
+#from imagenet import ImageNet
+#from cornell_grasps import CornellGrasps
 from categorized_grasps import CategorizedGrasps
 import  argparse
 
@@ -14,18 +14,18 @@ from    meta import Meta
 
 def main(args):
 
-    sinusoid = {'name':'sinusoid','class':Sinusoid, 'dims':[1,1,0]}
-    polynomial = {'name':'polynomial', 'class':Polynomial, 'dims':[2,1,0]}
-    imagenet = {'name':'imagenet', 'class':ImageNet, 'dims':[4096,2,0]}
-    grasps = {'name':'grasps', 'class':CornellGrasps, 'dims':[4096,2,0]}
+    #sinusoid = {'name':'sinusoid','class':Sinusoid, 'dims':[1,1,0]}
+    #polynomial = {'name':'polynomial', 'class':Polynomial, 'dims':[2,1,0]}
+    #imagenet = {'name':'imagenet', 'class':ImageNet, 'dims':[4096,2,0]}
+    #grasps = {'name':'grasps', 'class':CornellGrasps, 'dims':[4096,2,0]}
     cat_grasps = {'name':'cat_grasps', 'class':CategorizedGrasps, 'dims':[4096,2,1]} #third number is param length
-    data_params = {'sinusoid':sinusoid, 'polynomial':polynomial, 'imagenet':imagenet, 'grasps':grasps, 'cat':cat_grasps}
-    func_data = data_params[args.func_type]
+    #data_params = {'sinusoid':sinusoid, 'polynomial':polynomial, 'imagenet':imagenet, 'grasps':grasps, 'cat':cat_grasps}
+    func_data = cat_grasps #data_params[args.func_type]
 
     if args.split_cat == 1:
-        save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + 'split-cat_epoch'
+        save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + 'split' + str(args.split) + '-cat_epoch'
     else:
-        save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + 'split-obj_epoch'
+        save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + 'split' + str(args.split) + '-obj_epoch'
 
     torch.cuda.synchronize()
     torch.manual_seed(222)

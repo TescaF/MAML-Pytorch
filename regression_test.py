@@ -43,8 +43,6 @@ def main(args):
 
     #save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_model) + '_stepsz' + str(args.update_lr) + '_epoch' + str(valid_epoch) + '.pt'
 
-    ##TEMP##
-    valid_epoch=100000
     if args.split_cat == 1:
         save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_model) + '_stepsz' + str(args.update_lr) + 'split-cat_epoch' + str(valid_epoch) + '.pt'
     else:
@@ -115,6 +113,7 @@ def main(args):
     mod = Meta(args, config, func_data['dims']).to(device)
     mod.load_state_dict(torch.load(save_path))
     mod.eval()
+    print(mod)
 
     if args.merge_spt_qry == 1:
         qry_idx = 0
@@ -160,6 +159,8 @@ def main(args):
                     s_idx = al_method_k_centers(mod.net, tuned_w, c_data, c_idx, t_data, dims[2], args.batch_sz, output_dist=True)
                 if args.al_method == "input_space":
                     s_idx = al_method_k_centers(mod.net, tuned_w, c_data, c_idx, t_data, dims[2], args.batch_sz, output_dist=False)
+                if args.al_method == "dropout":
+                    s_idx = al_method_dropout(mod.net, tuned_w, c_data, c_idx, t_data, dims[2], args.batch_sz)
                     #del curr_mod
                     #torch.cuda.empty_cache()
                 inputa, labela = [], []
@@ -191,10 +192,11 @@ def main(args):
                 c_idx = []
             qin, ql = torch.from_numpy(qin).float().to(device), torch.from_numpy(ql).float().to(device)
             test_acc, tuned_w = mod.finetuning(qin, ql, q_set[0], q_set[1], dims[2], args.tuned_layers,new_env=(args.split_cat==0))
+            #print(str(len(queries[2])) + ": " + str(test_acc[-1]-test_acc[-5]))
             if len(accs) == 0:
                 accs.append(test_acc[0])
             accs.append( test_acc[-1] )
-            if np.isnan(test_acc[-1].cpu().detach().numpy()):
+            if np.isnan(test_acc[-1]): #.cpu().detach().numpy()):
                 pdb.set_trace()
         if args.iter_qry == 1:
             #pdb.set_trace()
@@ -213,6 +215,23 @@ def al_method_random(avail_cand_idx, req_count=1):
         c.append(avail_cand_idx[i])
     return c
 
+def al_method_dropout(mod, tuned_w, cand_data, avail_cand_idx, target_data, param_dim, req_count = 1):
+    if tuned_w is None:
+        tuned_w = mod.parameters()
+    dropout_ests = []
+    for i in range(cand_data.shape[0]):
+        dropout_ests.append([])
+    for i in range(50):
+        #cand_ests = mod(cand_data[:,:-param_dim], vars = tuned_w, bn_training=False, param_tensor=cand_data[:,-param_dim:],dropout=range(len(tuned_w) - args.tuned_layers))
+        cand_ests = mod(cand_data[:,:-param_dim], vars = tuned_w, bn_training=False, param_tensor=cand_data[:,-param_dim:],dropout=range(len(tuned_w))) # - args.tuned_layers, len(tuned_w)))
+        for j in range(cand_data.shape[0]):
+            dropout_ests[j].append(cand_ests[j])
+    variances = []
+    for i in avail_cand_idx: #dropout_ests:
+        variances.append(torch.sum(torch.var(torch.stack(dropout_ests[i]),dim=0)))
+    idx = np.argmax(variances)
+    return [avail_cand_idx[idx]] # max_min_dists[idx][0]
+
 def al_method_k_centers(mod, tuned_w, cand_data, avail_cand_idx, target_data, param_dim, req_count = 1, output_dist=True):
     if tuned_w is None:
         tuned_w = mod.parameters()
@@ -222,9 +241,9 @@ def al_method_k_centers(mod, tuned_w, cand_data, avail_cand_idx, target_data, pa
     for i in range(cand_data.shape[0]):
         for j in range(target_data.shape[0]):
             if output_dist:
-                dists[i, j] = F.mse_loss(cand_ests[i], tgt_ests[j])
+                dists[i, j] = torch.norm(cand_ests[i] - tgt_ests[j])
             else:
-                dists[i, j] = F.mse_loss(cand_data[i], target_data[j])
+                dists[i, j] = torch.norm(cand_data[i] - target_data[j])
 
     labeled_cands = np.setdiff1d(range(cand_data.shape[0]), avail_cand_idx)
     max_min_dists = []
@@ -237,7 +256,7 @@ def al_method_k_centers(mod, tuned_w, cand_data, avail_cand_idx, target_data, pa
             for exp_cands in np.concatenate([labeled_cands, x]):
                 min_dist = min(min_dist, dists[exp_cands, pt])
             min_dists.append(min_dist)
-        max_min_dists.append([i, max(min_dists)])
+        max_min_dists.append([x, max(min_dists)])
     idx = np.argmin(np.array(max_min_dists)[:,1])
     return C[idx] # max_min_dists[idx][0]
             
