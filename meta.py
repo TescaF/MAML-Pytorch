@@ -24,7 +24,6 @@ class Meta(nn.Module):
 
         self.update_lr = args.update_lr
         self.meta_lr = args.meta_lr
-        self.svm_lr = args.svm_lr
         self.k_spt = args.k_spt
         self.k_qry = args.k_qry
         self.task_num = args.task_num
@@ -116,7 +115,7 @@ class Meta(nn.Module):
         self.meta_optim.zero_grad()
         loss_q.backward()
         #print([i.grad.data for i in self.meta_optim.param_groups[0]['params'] if i.grad is not None])  
-        torch.nn.utils.clip_grad_value_(self.net.parameters(), 10)
+        #torch.nn.utils.clip_grad_value_(self.net.parameters(), 10)
         self.meta_optim.step()
 
 

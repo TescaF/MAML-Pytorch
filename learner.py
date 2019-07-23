@@ -149,7 +149,7 @@ class Learner(nn.Module):
 
 
 
-    def forward(self, x, vars=None, bn_training=True, param_tensor=None, dropout=[]):
+    def forward(self, x, vars=None, bn_training=True, param_tensor=None, dropout=[], dropout_rate=0.0):
         """
         This function can be called by finetunning, however, in finetunning, we dont wish to update
         running_mean/running_var. Thought weights/bias of bn is updated, it has been separated by fast_weights.
@@ -163,7 +163,7 @@ class Learner(nn.Module):
 
         if vars is None:
             vars = self.vars
-        p = 0.2
+        p = dropout_rate #0.4
         idx = 0
         bn_idx = 0
         for name, param in self.config:

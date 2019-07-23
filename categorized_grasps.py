@@ -54,15 +54,17 @@ class CategorizedGrasps:
         #print(str(len(self.inputs.keys())) + " samples loaded (Dims " + str(self.dim_input) + "x" + str(self.dim_output) + ")")
 
         self.num_samples_per_class = k_shot + k_qry 
-        outtxt = "Objs per category:\n"
-        for c in self.categories.keys():
-            outtxt += str(len(self.categories[c])) + ", "
-        print(outtxt)
+        #outtxt = "Objs per category:\n"
+        #for c in self.categories.keys():
+        #    outtxt += str(len(self.categories[c])) + ", "
+        #print(outtxt)
 
     def next(self):
         outputs = np.zeros([self.batch_size, self.num_samples_per_class*self.num_grasps_per_sample, self.dim_output])
         init_inputs = np.zeros([self.batch_size, self.num_samples_per_class*self.num_grasps_per_sample, self.dim_input + self.dim_params])
         valid_cats = [c for c in sorted(self.categories.keys()) if len(self.categories[c]) >= self.num_samples_per_class]
+        if len(valid_cats) < self.batch_size:
+            pdb.set_trace()
         tasks = self.rand.choice(len(valid_cats), self.batch_size, replace=False)
         tasks = [self.categories[valid_cats[t]] for t in tasks]
         #tasks = self.rand.randint(0, len(valid_cats), self.batch_size)

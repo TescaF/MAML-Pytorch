@@ -7,6 +7,7 @@ import  numpy as np
 #from imagenet import ImageNet
 #from cornell_grasps import CornellGrasps
 from categorized_grasps import CategorizedGrasps
+from affordances import Affordances
 import  argparse
 
 from    meta import Meta
@@ -19,13 +20,23 @@ def main(args):
     #imagenet = {'name':'imagenet', 'class':ImageNet, 'dims':[4096,2,0]}
     #grasps = {'name':'grasps', 'class':CornellGrasps, 'dims':[4096,2,0]}
     cat_grasps = {'name':'cat_grasps', 'class':CategorizedGrasps, 'dims':[4096,2,1]} #third number is param length
-    #data_params = {'sinusoid':sinusoid, 'polynomial':polynomial, 'imagenet':imagenet, 'grasps':grasps, 'cat':cat_grasps}
-    func_data = cat_grasps #data_params[args.func_type]
+    affordances = {'name':'affordances', 'class':Affordances, 'dims':[4096,3,0]} #third number is param length
+    data_params = {'affordances':affordances, 'cat_grasps':cat_grasps}
+    func_data = data_params[args.func_type]
+
+    if args.leave_out > 0:
+        split_txt = ''
+        split_num = args.leave_out
+        dir_name = "lo_" + str(args.leave_out) + "/"
+    else:
+        split_txt = 'split' + str(args.split)
+        split_num = args.split
+        dir_name = ""
 
     if args.split_cat == 1:
-        save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + 'split' + str(args.split) + '-cat_epoch'
+        save_path = os.getcwd() + '/data/' + func_data['name'] + '/' + dir_name + 'model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + split_txt + '-cat_epoch'
     else:
-        save_path = os.getcwd() + '/data/' + func_data['name'] + '/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + 'split' + str(args.split) + '-obj_epoch'
+        save_path = os.getcwd() + '/data/' + func_data['name'] + '/' + dir_name + 'model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + split_txt + '-obj_epoch'
 
     torch.cuda.synchronize()
     torch.manual_seed(222)
@@ -36,7 +47,11 @@ def main(args):
 
     print(args)
 
-    dim_hidden = [4096,[512,513], 128]
+    if args.func_type == "cat_grasps":
+        dim_hidden = [4096,[512,513], 128]
+    if args.func_type == "affordances":
+        dim_hidden = [4096,512, 128]
+
     #dim_hidden = [4096,500]
     #dim_hidden = [40,40]
     dims = func_data['dims']
@@ -99,7 +114,7 @@ def main(args):
                        k_shot=args.k_spt,
                        k_qry=args.k_qry,
                        num_grasps=args.grasps,
-                       split=args.split,
+                       split=split_num,
                        train=True,
                        split_cat=args.split_cat)
 
@@ -154,10 +169,10 @@ if __name__ == '__main__':
     argparser.add_argument('--update_step', type=int, help='task-level inner update steps', default=5)
     argparser.add_argument('--update_step_test', type=int, help='update steps for finetunning', default=10)
     argparser.add_argument('--func_type', type=str, help='function type', default="sinusoid")
-    argparser.add_argument('--svm_lr', type=float, help='task-level inner update learning rate', default=0.001)
     argparser.add_argument('--grasps', type=int, help='number of grasps per object sample', default=1)
     argparser.add_argument('--tuned_layers', type=int, help='number of grasps per object sample', default=2)
     argparser.add_argument('--split', type=float, help='training/testing data split', default=0.5)
+    argparser.add_argument('--leave_out', type=int, help='affordance number to leave out during training (2-6)', default=-1)
     argparser.add_argument('--split_cat', type=int, help='1 if training/testing data is split by category, 0 if split by object id', default=1)
  
 
