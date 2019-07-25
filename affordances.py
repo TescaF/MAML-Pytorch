@@ -13,9 +13,11 @@ from PIL import Image
 import pickle
 from numpy.random import RandomState
 
+
 class Affordances:
-    def __init__(self, batchsz, k_shot, k_qry, num_grasps, split, train, split_cat):
+    def __init__(self, batchsz, k_shot, k_qry, num_grasps, split, train, split_cat, include_angles=True):
         split_task = split_cat
+        self.include_angles = include_angles
         """
         :param batchsz: task num
         :param k_shot: number of samples for fine-tuning
@@ -25,6 +27,10 @@ class Affordances:
         self.rand = RandomState(222)
         fts_loc = "/home/tesca/data/part-affordance-dataset/features/all_fts.pkl"
         self.train = train
+        if self.include_angles:
+            self.weights = np.array([1.0, 1.0, 100.0])
+        else:
+            self.weights = np.array([1.0, 1.0])
         if train:
             self.aff_range = list(range(2,7))
             self.aff_range.remove(split)
@@ -75,7 +81,10 @@ class Affordances:
                     else:
                         self.affordances[aff] = [o]
         self.dim_input = 4096
-        self.dim_output = 3#self.outputs[0].shape[0]-1 #self.dataset[1].shape[0]
+        if self.include_angles:
+            self.dim_output = 3#self.outputs[0].shape[0]-1 #self.dataset[1].shape[0]
+        else:  
+            self.dim_output = 2
         self.dim_params = 0
         self.num_samples_per_class = k_shot + k_qry 
         #if train:
@@ -85,7 +94,7 @@ class Affordances:
         #    self.task_pairs = self.new_task_pairs()
         #elif split_task == 0:
         #    self.task_pairs = self.new_cat_pairs()
-        print("Task pairs: " + str(len(self.task_pairs)))
+        #print("Task pairs: " + str(len(self.task_pairs)))
         if batchsz < 0:
             self.batch_size = len(self.task_pairs)
         else:
@@ -158,8 +167,15 @@ class Affordances:
                     angle -= math.pi
                 angle = angle / (math.pi / 2.0) #Scale to [-1, 1]
                 init_inputs[i,j] = self.inputs[sample[1]]
-                outputs[i, j] = [obj[1][0],obj[1][1], angle]
+                if self.include_angles:
+                    outputs[i, j] = np.array([obj[1][0],obj[1][1], angle])*self.weights
+                else:
+                    outputs[i, j] = np.array([obj[1][0],obj[1][1]])*self.weights
         return init_inputs, outputs
+
+class Affordances2D(Affordances):
+    def __init__(self, batchsz, k_shot, k_qry, num_grasps, split, train, split_cat):
+        super(Affordances2D, self).__init__(batchsz, k_shot, k_qry, num_grasps, split, train, split_cat, include_angles=False)
 
 if __name__ == '__main__':
     IN = Affordances(5,3,3,0.5,1,1)

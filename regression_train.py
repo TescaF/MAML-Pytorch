@@ -7,7 +7,7 @@ import  numpy as np
 #from imagenet import ImageNet
 #from cornell_grasps import CornellGrasps
 from categorized_grasps import CategorizedGrasps
-from affordances import Affordances
+from affordances import Affordances, Affordances2D
 import  argparse
 
 from    meta import Meta
@@ -21,7 +21,8 @@ def main(args):
     #grasps = {'name':'grasps', 'class':CornellGrasps, 'dims':[4096,2,0]}
     cat_grasps = {'name':'cat_grasps', 'class':CategorizedGrasps, 'dims':[4096,2,1]} #third number is param length
     affordances = {'name':'affordances', 'class':Affordances, 'dims':[4096,3,0]} #third number is param length
-    data_params = {'affordances':affordances, 'cat_grasps':cat_grasps}
+    affordances_2d = {'name':'affordances_2d', 'class':Affordances2D, 'dims':[4096,2,0]} #third number is param length
+    data_params = {'affordances':affordances, 'cat_grasps':cat_grasps, 'affordances_2d':affordances_2d}
     func_data = data_params[args.func_type]
 
     if args.leave_out > 0:
@@ -50,6 +51,8 @@ def main(args):
     if args.func_type == "cat_grasps":
         dim_hidden = [4096,[512,513], 128]
     if args.func_type == "affordances":
+        dim_hidden = [4096,512, 128]
+    if args.func_type == "affordances_2d":
         dim_hidden = [4096,512, 128]
 
     #dim_hidden = [4096,500]

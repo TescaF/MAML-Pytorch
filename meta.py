@@ -47,6 +47,15 @@ class Meta(nn.Module):
         for line in sorted(tensors.items()):
             print('{}\t{}'.format(*line))
 
+    def weighted_mse_loss(self, x, y, w):
+        return F.mse_loss(x,y)
+        '''out = (x - y)**2.0
+        out = out * w.expand_as(out)
+        #loss = out.sum(0)
+        #loss = torch.mean(out,0)
+        #pdb.set_trace()
+        return torch.mean(out)'''
+
     def forward(self, x_spt, y_spt, x_qry, y_qry, param_dim, num_tuned_layers):
         """
 
@@ -56,6 +65,8 @@ class Meta(nn.Module):
         :param y_qry:   [b, querysz]
         :return:
         """
+        #weights = torch.cuda.FloatTensor([1.0, 1.0, 100.0])
+        weights = torch.autograd.Variable(torch.cuda.FloatTensor([1.0, 1.0, 1.0]),requires_grad=False)
         task_num = x_spt.size(0)
         if param_dim > 0:
             p_spt = x_spt[:,:,-param_dim:]
@@ -78,7 +89,8 @@ class Meta(nn.Module):
 
             # 1. run the i-th task and compute loss for k=0
             logits = self.net(x_spt[i], vars=None, bn_training=True, param_tensor=p_spt[i])
-            loss = F.mse_loss(logits, y_spt[i])
+            #lossa = F.mse_loss(logits, y_spt[i])
+            loss = self.weighted_mse_loss(logits, y_spt[i], weights)
             grad = torch.autograd.grad(loss, filter(lambda p: p.requires_grad, self.net.parameters())) #line 6 in alg
             fast_weights = list(self.net.parameters())[:(-1)*num_tuned_layers] + list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, filter(lambda p: p.requires_grad, self.net.parameters()))))
             # loss before first update
@@ -86,25 +98,29 @@ class Meta(nn.Module):
                 pdb.set_trace()
             with torch.no_grad():
                 logits_q = self.net(x_qry[i], self.net.parameters(), bn_training=True, param_tensor=p_qry[i])
-                loss_q = F.mse_loss(logits_q, y_qry[i])
+                loss_q = self.weighted_mse_loss(logits_q, y_qry[i], weights)
+                #loss_q = F.mse_loss(logits_q, y_qry[i])
                 losses_q[0] += loss_q.data.item()
 
             # loss after the first update
             with torch.no_grad():
                 logits_q = self.net(x_qry[i], fast_weights, bn_training=True, param_tensor=p_qry[i])
-                loss_q = F.mse_loss(logits_q, y_qry[i])
+                loss_q = self.weighted_mse_loss(logits_q, y_qry[i], weights)
+                #loss_q = F.mse_loss(logits_q, y_qry[i])
                 losses_q[1] += loss_q.data.item()
 
             for k in range(1, self.update_step):
                 # 1. run the i-th task and compute loss for k=1~K-1
                 logits = self.net(x_spt[i], fast_weights, bn_training=True, param_tensor=p_spt[i])
-                loss = F.mse_loss(logits, y_spt[i])
+                loss = self.weighted_mse_loss(logits, y_spt[i], weights)
+                #loss = F.mse_loss(logits, y_spt[i])
                 # 2. compute grad on theta_pi
                 grad = torch.autograd.grad(loss, filter(lambda p: p.requires_grad, fast_weights)) #line 6 in alg
                 fast_weights = list(self.net.parameters())[:(-1)*num_tuned_layers] + list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, filter(lambda p: p.requires_grad, self.net.parameters()))))
 
                 logits_q = self.net(x_qry[i], fast_weights, bn_training=True, param_tensor=p_qry[i])
-                loss_q = F.mse_loss(logits_q, y_qry[i])
+                loss_q = self.weighted_mse_loss(logits_q, y_qry[i], weights)
+                #loss_q = F.mse_loss(logits_q, y_qry[i])
                 losses_q[k + 1] += loss_q.data.item()
             last_loss += loss_q
         # sum over all losses on query set across all tasks

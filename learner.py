@@ -149,7 +149,7 @@ class Learner(nn.Module):
 
 
 
-    def forward(self, x, vars=None, bn_training=True, param_tensor=None, dropout=[], dropout_rate=0.0):
+    def forward(self, x, vars=None, bn_training=True, param_tensor=None, dropout=[], dropout_rate=0.0, hook=None):
         """
         This function can be called by finetunning, however, in finetunning, we dont wish to update
         running_mean/running_var. Thought weights/bias of bn is updated, it has been separated by fast_weights.
@@ -169,6 +169,8 @@ class Learner(nn.Module):
         for name, param in self.config:
             if not vars[idx].shape[-1] == x.shape[-1]:
                 x = torch.cat((x, param_tensor),1)
+            if hook == idx:
+                hook_data = x
             if name is 'conv2d':
                 w, b = vars[idx], vars[idx + 1]
                 # remember to keep synchrozied of forward_encoder and forward_decoder!
@@ -227,8 +229,10 @@ class Learner(nn.Module):
         assert idx == len(vars)
         #assert bn_idx == len(self.vars_bn)
 
-
-        return x
+        if hook is None:
+            return x
+        else:
+            return hook_data
 
 
     def zero_grad(self, vars=None):

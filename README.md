@@ -9,6 +9,11 @@ Adapted from [MAML-Pytorch](https://github.com/dragen1860/MAML-Pytorch).
 - Pytorch: 0.4+
 
 # Training
+UMD Affordances:
+python -u regression_train.py --func_type="affordances" --split_cat=1 --task_num=4 --tuned_layers=6 --k_spt=5 --k_qry=5 --epoch=30000 --update_lr=0.001 --leave_out=6 | tee "/home/tesca/software/MAML-Pytorch/data/affordances/lo_6/k5_output.txt"
+
+
+Grasp Categories:
 python -u regression_train.py --grasps=5 --split=0.7 --split_cat=1 --task_num=25 --tuned_layers=6 --k_spt=5 --k_qry=5 --epoch=300000 | tee data/cat_grasps/summary_split_cat_k5.txt
 
 # Testing

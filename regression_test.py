@@ -65,8 +65,8 @@ def main(args):
     torch.cuda.synchronize()
     np.random.seed(222)
 
-    print("loading epoch " + str(valid_epoch))
-    print(args)
+    #print("loading epoch " + str(valid_epoch))
+    #print(args)
 
     #device = torch.device('cpu')
     device = torch.device('cuda')
@@ -153,8 +153,8 @@ def main(args):
     #for i in range(args.task_num):
     for l in range(args.task_num):
         batch_x, batch_y = db_train.next()
-        sys.stdout.write("\rTask %i" % l)
-        sys.stdout.flush()
+        #sys.stdout.write("\rTask %i" % l)
+        #sys.stdout.flush()
         for i in range(batch_x.shape[0]):
             queries = None
             accs = []
@@ -175,6 +175,8 @@ def main(args):
                         s_idx = al_method_k_centers(mod.net, tuned_w, c_data, c_idx, t_data, dims[2], args.batch_sz, output_dist=False)
                     if args.al_method == "dropout":
                         s_idx = al_method_dropout(mod.net, tuned_w, c_data, c_idx, t_data, dims[2], args.batch_sz)
+                    if args.al_method == "gaussian":
+                        s_idx = al_method_gaussian(mod.net, tuned_w, c_data, c_idx, t_data, dims[2], args.batch_sz)
                         #del curr_mod
                         #torch.cuda.empty_cache()
                     inputa, labela = [], []
@@ -220,7 +222,8 @@ def main(args):
                 all_accs[i].append(test_acc)
     for j in range(len(all_accs)):
         accs_val = np.array(all_accs[j]).mean(axis=0).astype(np.float16)
-        print('\nTask ' + str(j) + ' loss:', accs_val)
+        print('Loss:', accs_val)
+        #print('\nTask ' + str(j) + ' loss:', accs_val)
 
 def al_method_random(avail_cand_idx, req_count=1):
     #idxs = np.random.randint(0, len(avail_cand_idx), req_count)
@@ -229,6 +232,74 @@ def al_method_random(avail_cand_idx, req_count=1):
     for i in idxs:
         c.append(avail_cand_idx[i])
     return c
+
+def al_method_gaussian(mod, tuned_w, cand_data, avail_cand_idx, target_data, param_dim, req_count = 1):
+    if tuned_w is None:
+        tuned_w = mod.parameters()
+    cand_num = cand_data.shape[0]
+
+    # Get dropout predictions
+    dropout_ests = []
+    for i in range(cand_num):
+        dropout_ests.append([])
+    for i in range(50):
+        cand_ests = mod(cand_data[:,:-param_dim], vars = tuned_w, bn_training=True, param_tensor=cand_data[:,-param_dim:],dropout=range(len(tuned_w) - args.tuned_layers, len(tuned_w)),dropout_rate=args.dropout_rate)
+        for j in range(cand_num):
+            dropout_ests[j].append(cand_ests[j])
+    feat_ests = mod(cand_data[:,:-param_dim], vars = tuned_w, bn_training=True, param_tensor=cand_data[:,-param_dim:],hook=len(tuned_w)-args.tuned_layers)
+
+    # Get prediction variances
+    variances, means, disps = [], [], []
+    for i in range(cand_num): #dropout_ests:
+        ests = torch.stack(dropout_ests[i])
+        variances.append(torch.sum(torch.var(ests,dim=0)))
+        means.append(torch.mean(ests,dim=0))
+        disps.append(torch.sum(torch.var(ests,dim=0)/torch.abs(torch.mean(ests,dim=0))))
+
+    # Get distances between prediction means for each candidate
+    dists = torch.zeros([cand_num,cand_num])
+    in_dists = torch.zeros([cand_num,cand_num])
+    feat_dists = torch.zeros([cand_num,cand_num])
+    for i in range(cand_num):
+        for j in range(cand_num):
+            dists[i,j] = torch.sum((means[i] - means[j])**2.0)
+            in_dists[i,j] = torch.sum((cand_data[i] - cand_data[j])**2.0)
+            feat_dists[i,j] = torch.sum((feat_ests[i] - feat_ests[j])**2.0)
+    dists = dists/torch.max(dists)
+    dists = torch.ones_like(dists) - dists
+    in_dists = in_dists/torch.max(in_dists)
+    in_dists = torch.ones_like(in_dists) - in_dists
+    feat_dists = feat_dists/torch.max(feat_dists)
+    feat_dists = torch.ones_like(feat_dists) - feat_dists
+        
+    # Calculate sum of weighted variances after each candidate is labeled
+    total_vars, total_disps, in_disps, feat_disps = [], [], [], []
+    for i in avail_cand_idx:
+        total_var = 0.0
+        total_disp = 0.0
+        in_disp = 0.0
+        feat_disp = 0.0
+        for j in avail_cand_idx:
+            total_disp += (disps[j] * (1.0 - dists[i,j]))
+            total_var += (variances[j] * (1.0 - dists[i,j]))
+            in_disp += (disps[j] * (1.0 - in_dists[i,j]))
+            feat_disp += (disps[j] * (1.0 - feat_dists[i,j]))
+        total_vars.append(total_var)
+        total_disps.append(total_disp)
+        in_disps.append(in_disp)
+        feat_disps.append(feat_disp)
+
+    #Select based on least expected variance:
+    idx = np.argmin(np.array(total_vars)) 
+    #Select based on least expected disparity, using 3D output space to determine candidate similarity:
+    idx2 = np.argmin(np.array(total_disps))
+    #Select based on least expected disparity, using 4096D input space to determine candidate similarity:
+    idx3 = np.argmin(np.array(in_disps)) 
+    #Select based on least expected disparity, using 512D intermediate space to determine candidate similarity:
+    idx4 = np.argmin(np.array(feat_disps))
+
+    #Output-space disparity returns best results right now
+    return [avail_cand_idx[idx2]] # max_min_dists[idx][0]
 
 def al_method_dropout(mod, tuned_w, cand_data, avail_cand_idx, target_data, param_dim, req_count = 1):
     if tuned_w is None:
@@ -250,7 +321,8 @@ def al_method_dropout(mod, tuned_w, cand_data, avail_cand_idx, target_data, para
     for i in avail_cand_idx: #dropout_ests:
         variances.append(torch.sum(torch.var(torch.stack(dropout_ests[i]),dim=0)))
         ests = torch.stack(dropout_ests[i])
-        variances_all.append(torch.sum(torch.div(torch.var(ests,dim=0),torch.abs(torch.mean(ests,dim=0)))))
+        variances_all.append(torch.sum(torch.div(torch.std(ests,dim=0),torch.abs(torch.mean(ests,dim=0)))))
+        #variances_all.append(torch.sum(torch.div(torch.var(ests,dim=0),torch.abs(torch.mean(ests,dim=0)))))
     if args.all_vars == 1:
         idx = np.argmax(variances_all)
     else:
