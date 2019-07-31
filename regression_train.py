@@ -25,10 +25,13 @@ def main(args):
     data_params = {'affordances':affordances, 'cat_grasps':cat_grasps, 'affordances_2d':affordances_2d}
     func_data = data_params[args.func_type]
 
-    if args.leave_out > 0:
+    if args.leave_out >= 0:
         split_txt = ''
         split_num = args.leave_out
-        dir_name = "lo_" + str(args.leave_out) + "/"
+        if args.split_cat == 1:
+            dir_name = "lo_" + str(args.leave_out) + "/"
+        else:
+            dir_name = "cat_" + str(args.leave_out) + "/"
     else:
         split_txt = 'split' + str(args.split)
         split_num = args.split

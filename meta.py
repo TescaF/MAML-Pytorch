@@ -138,9 +138,12 @@ class Meta(nn.Module):
         return np.array(losses_q) / task_num #, svm_loss_total
         #return accs
 
-    def finetuning(self, x_spt, y_spt, x_qry, y_qry, param_dim, num_tuned_layers, new_env=False):
+    def finetuning(self, x_spt, y_spt, x_qry, y_qry, param_dim, num_tuned_layers, new_env=False, prev_net=None):
         #self.debug_memory()
-        net = deepcopy(self.net)
+        if prev_net is None:
+            net = deepcopy(self.net)
+        else:
+            net = deepcopy(prev_net)
         #self.debug_memory()
         if new_env:
             for p in net.parameters():
@@ -155,7 +158,6 @@ class Meta(nn.Module):
             for i in range(num_tuned_layers):
                 list(net.parameters())[(-1) * (i+1)].requires_grad = True
             stuck_layers = list(net.parameters())[:(-1)*num_tuned_layers]
-
         task_num = x_spt.size(0)
         if param_dim > 0:
             p_spt = x_spt[:,-param_dim:]
@@ -217,10 +219,10 @@ class Meta(nn.Module):
             torch.cuda.empty_cache()
 
         del net
-        #self.debug_memory()
-        #print([int(losses[0]),int(losses[-1])])
         torch.cuda.empty_cache()
         return np.array(losses)/x_qry.size(0), fast_weights
+        #self.debug_memory()
+        #print([int(losses[0]),int(losses[-1])])
 
 
 def main():

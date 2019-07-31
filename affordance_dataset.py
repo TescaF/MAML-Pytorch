@@ -129,7 +129,7 @@ class ImageProc:
         aff_pts = [(i,j) for i in range(data.shape[0]) for j in range(data.shape[1]) if data[i,j] == aff]
         if len(aff_pts) == 0:
             return None, disp_img
-        clusters = sklearn.cluster.DBSCAN(eps=3, min_samples=20).fit_predict(aff_pts)
+        clusters = sklearn.cluster.DBSCAN(eps=3, min_samples=10).fit_predict(aff_pts)
         disp_pts = [aff_pts[i] for i in range(len(aff_pts)) if clusters[i] > -1]
         if len(disp_pts) == 0:
             return None, disp_img
