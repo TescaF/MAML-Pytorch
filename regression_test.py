@@ -15,7 +15,7 @@ from copy import deepcopy
 import itertools
 from meta import Meta
 from categorized_grasps import CategorizedGrasps
-from affordances import Affordances, Affordances2D
+from affordances import Affordances, Affordances2D, Affordances2DTT
 
 def main(args):
 
@@ -26,7 +26,8 @@ def main(args):
     cat_grasps = {'name':'cat_grasps', 'class':CategorizedGrasps, 'dims':[4096,2,1]} #third number is param length
     affordances = {'name':'affordances', 'class':Affordances, 'dims':[4096,3,0]} #third number is param length
     affordances_2d = {'name':'affordances_2d', 'class':Affordances2D, 'dims':[4096,2,0]} #third number is param length
-    data_params = {'affordances':affordances, 'cat_grasps':cat_grasps, 'affordances_2d':affordances_2d}
+    affordances_tt = {'name':'affordances_tt', 'class':Affordances2DTT, 'dims':[4096,2,2]} #third number is param length
+    data_params = {'affordances':affordances, 'cat_grasps':cat_grasps, 'affordances_2d':affordances_2d, 'affordances_tt':affordances_tt}
     func_data = data_params[args.func_type]
 
     if args.leave_out >= 0:
@@ -85,6 +86,8 @@ def main(args):
         dim_hidden = [4096,512, 128]
     if args.func_type == "affordances_2d":
         dim_hidden = [4096,512, 128]
+    if args.func_type == "affordances_tt":
+        dim_hidden = [4096,[512,514], 128]
 
     #dim_hidden = [40,40]
     dims = func_data['dims']

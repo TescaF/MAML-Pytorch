@@ -129,7 +129,7 @@ class ImageProc:
         aff_pts = [(i,j) for i in range(data.shape[0]) for j in range(data.shape[1]) if data[i,j] == aff]
         if len(aff_pts) == 0:
             return None, disp_img
-        clusters = sklearn.cluster.DBSCAN(eps=3, min_samples=10).fit_predict(aff_pts)
+        clusters = sklearn.cluster.DBSCAN(eps=3, min_samples=20).fit_predict(aff_pts)
         disp_pts = [aff_pts[i] for i in range(len(aff_pts)) if clusters[i] > -1]
         if len(disp_pts) == 0:
             return None, disp_img
@@ -150,12 +150,12 @@ class ImageProc:
         normal = math.atan(reg.coef_) + math.pi/2.0
         dx = int(math.cos(normal) * 10)
         dy = int(math.sin(normal) * 10)
-        plt.arrow(cx, cy, dx, dy, head_width=5, color=arrow_color)
+        #plt.arrow(cx, cy, dx, dy, head_width=5, color=arrow_color)
         if len(disp_img.shape) > 2:
             cvt = cv.cvtColor(disp_img, cv.COLOR_BGR2RGB)
         else:
             cvt = disp_img
-        plt.imshow(cvt)
+        #plt.imshow(cvt)
         return [cx, cy, normal], disp_img
 
     def tf_result(self, obj_name, aff):
@@ -166,52 +166,65 @@ class ImageProc:
         if goal is None:
             return np.array([None]*3)
         tf = self.get_tf(grasp, goal)
-        return tf
+        return grasp, goal, tf
 
     def get_tf(self, pt_a, pt_b):
         return np.array([pt_b[0]-pt_a[0], pt_b[1]-pt_a[1], pt_b[2]-pt_a[2]])
         
-    def save_transforms(self):
+    def show_transforms(self, obj_name, aff):
+        grasp, goal, tf = self.tf_result(obj_name, aff)
+        try:
+            img_loc = self.base_dir + "cropped/" + obj_name + "_rgb.jpg"
+            img_in = Image.open(img_loc)
+            normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            to_tensor = transforms.ToTensor()
+            scaler = transforms.Resize((224, 224))
+            img_var = Variable(normalize(to_tensor(scaler(img_in))))
+            img_show = (img_var.permute(1,2,0) + 2.5)/5.0
+            plt.imshow(img_show)
+            grasp_x = grasp[0]*(224/img_in.size[0])
+            grasp_y = grasp[1]*(224/img_in.size[1])
+            aff_x = goal[0]*(224/img_in.size[0])
+            aff_y = goal[1]*(224/img_in.size[1])
+            plt.scatter([grasp_x],[grasp_y],color='r')
+            plt.scatter([aff_x],[aff_y],color='g')
+            plt.show()
+        except:
+            return None    
+        
+
+    def save_transforms(self, transform=True):
         obj_splits = [line.rstrip('\n') for line in open(self.base_dir + "novel_split.txt")]
         splits = dict()
         affs = range(2,7)
         for a in affs:
             aff_dict = dict()
+            pos_dict = dict()
             print("Affordance " + str(a))
             for obj in obj_splits:
                 obj_name = obj.split()[1]
                 split_num = obj.split()[0]
-                tf = [a, proc.tf_result(obj_name, a)]
+                grasp, goal, tf = self.tf_result(obj_name, a)
+                tf = [a, tf]
+                pos = [a, grasp, goal]
                 print(obj_name + ": " + str(tf))
                 aff_dict[obj_name] = tf
+                pos_dict[obj_name] = pos
                 if not split_num in splits.keys():
                     splits[split_num] = dict()
                 if obj_name in splits[split_num].keys():
                     splits[split_num][obj_name] += [tf]
                 else:
                     splits[split_num][obj_name] = [tf] 
-            with open(proc.base_dir + "features/aff_" + str(a) + "_transforms.pkl", 'wb') as handle:
-                pickle.dump(aff_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
-        for s in splits.keys():
-            with open(proc.base_dir + "features/obj_split_" + s + "_transforms.pkl", 'wb') as handle:
-                pickle.dump(splits[s], handle, protocol=pickle.HIGHEST_PROTOCOL)
-
-    def save_transforms_old(self):
-        #objs = ["saw_02","saw_03","scissors_01","scissors_02","pot_01","pot_02"]
-        objs = [i.split("_rgb")[0] for i in os.listdir(self.base_dir + "cropped") if i.endswith('.jpg')]
-        affs = range(2,7)
-        for a in affs:
-            all_tfs = []
-            aff_dict = dict()
-            print("Affordance " + str(a))
-            for obj_name in objs:
-                tf = proc.tf_result(obj_name, a)
-                print(obj_name + ": " + str(tf))
-                aff_dict[obj_name] = tf
-            with open(proc.base_dir + "features/aff_" + str(a) + "_transforms.pkl", 'wb') as handle:
-                pickle.dump(aff_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
-            #np.save(proc.base_dir + "features/aff_" + str(a) + "_transforms.npy", aff_dict)
-            #np.save(proc.base_dir + "features/aff_" + str(a) + "_transforms.npy", np.stack(all_tfs))
+            if transform:
+                with open(self.base_dir + "features/aff_" + str(a) + "_transforms.pkl", 'wb') as handle:
+                    pickle.dump(aff_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
+            else:
+                with open(self.base_dir + "features/aff_" + str(a) + "_positions.pkl", 'wb') as handle:
+                    pickle.dump(pos_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        #for s in splits.keys():
+        #    with open(proc.base_dir + "features/obj_split_" + s + "_transforms.pkl", 'wb') as handle:
+        #        pickle.dump(splits[s], handle, protocol=pickle.HIGHEST_PROTOCOL)
 
     def proc_features(self):
         objs = [i.split("_rgb")[0] for i in os.listdir(self.base_dir + "cropped") if i.endswith('.jpg')]
@@ -255,5 +268,7 @@ class ImageProc:
 
 if __name__ == '__main__':
     proc = ImageProc()
-    proc.save_transforms()
+    #proc.show_transforms("mug_01",5)
+    #proc.show_transforms("mug_01",3)
+    proc.save_transforms(transform=False)
     #proc.proc_features()

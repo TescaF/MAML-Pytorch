@@ -16,6 +16,7 @@ from numpy.random import RandomState
 
 class Affordances:
     def __init__(self, batchsz, k_shot, k_qry, num_grasps, split, train, split_cat, include_angles=True, grasp_params=False):
+        self.grasp_params = grasp_params
         self.split_task = split_cat
         self.include_angles = include_angles
         """
@@ -41,13 +42,19 @@ class Affordances:
                 #obj_dir = "/home/tesca/data/part-affordance-dataset/features/small_aff/"
                 obj_loc = []
                 for a in self.aff_range:
-                    obj_loc.append(obj_dir + "aff_" + str(a) + "_transforms.pkl")
+                    if self.grasp_params:
+                        obj_loc.append(obj_dir + "aff_" + str(a) + "_positions.pkl")
+                    else:
+                        obj_loc.append(obj_dir + "aff_" + str(a) + "_transforms.pkl")
             else:
                 self.ignored_objects = self.cat_names[split]
                 obj_dir = "/home/tesca/data/part-affordance-dataset/features/large_aff/"
                 obj_loc = []
                 for a in self.aff_range:
-                    obj_loc.append(obj_dir + "aff_" + str(a) + "_transforms.pkl")
+                    if self.grasp_params:
+                        obj_loc.append(obj_dir + "aff_" + str(a) + "_positions.pkl")
+                    else:
+                        obj_loc.append(obj_dir + "aff_" + str(a) + "_transforms.pkl")
         else:
             if self.split_task == 1:
                 #obj_loc = "/home/tesca/data/part-affordance-dataset/features/small_aff/"
@@ -55,14 +62,20 @@ class Affordances:
                 #self.aff_range = [3, 5]
                 obj_dir = "/home/tesca/data/part-affordance-dataset/features/large_aff/"
                 #obj_dir = "/home/tesca/data/part-affordance-dataset/features/small_aff/"
-                obj_loc = [obj_dir + "aff_" + str(split) + "_transforms.pkl"]
+                if self.grasp_params:
+                    obj_loc = [obj_dir + "aff_" + str(split) + "_positions.pkl"]
+                else:
+                    obj_loc = [obj_dir + "aff_" + str(split) + "_transforms.pkl"]
                 self.aff_range = [split]
             else:
                 self.ignored_objects = self.cat_names[split]
-                obj_dir = "/home/tesca/data/part-affordance-dataset/features/small_aff/"
+                obj_dir = "/home/tesca/data/part-affordance-dataset/features/large_aff/"
                 obj_loc = []
                 for a in self.aff_range:
-                    obj_loc.append(obj_dir + "aff_" + str(a) + "_transforms.pkl")
+                    if self.grasp_params:
+                        obj_loc.append(obj_dir + "aff_" + str(a) + "_positions.pkl")
+                    else:
+                        obj_loc.append(obj_dir + "aff_" + str(a) + "_transforms.pkl")
 
         with open(fts_loc, 'rb') as handle:
             self.inputs = pickle.load(handle)       #dict(img) = [[4096x1], ... ]
@@ -88,7 +101,7 @@ class Affordances:
         obj_keys = list(sorted(self.objects.keys()))
         for o in obj_keys:
             for a in self.objects[o]:
-                if not np.isin(a[1],None).any():
+                if not np.isin(a[-1],None).any():
                     aff = str(a[0])
                     if aff in self.affordances.keys():
                         self.affordances[aff].append(o)
@@ -117,44 +130,13 @@ class Affordances:
         else:
             self.batch_size = batchsz
 
-
-    def new_task_pairs(self):
-        pairs = []
-        for i in self.aff_range:
-            #aff_idx = self.aff_range.index(int(i))
-            # Get samples in that are valid for the current affordance
-            #samples = [o for o in obj_keys if not np.isin(self.objects[o][aff_idx][1], None).any()] 
-            samples = self.affordances[str(i)]
-            pairs.append([[str(i), s] for s in samples])
-        return pairs
-
-    def new_cat_pairs(self):
-        pairs = []
-        categories = [c.split("_")[0] for c in self.objects.keys()]
-        counts = [categories.count(c) for c in list(set(categories))]
-        categories = list(sorted(set([c for c in categories if categories.count(c) >= self.num_samples_per_class])))
-        for cat in categories:
-            valid_objs = []
-            cat_pairs = []
-            for aff in self.aff_range: 
-                # Get all objects in this category for this affordance
-                objs = [c for c in self.affordances[str(aff)] if c.startswith(cat)]
-                for obj in objs:
-                    cat_pairs.append([str(aff),obj]) 
-            pairs.append(cat_pairs)
-        return pairs
-
     def aff_cat_pairs(self):
         pairs = []
         if self.split_task == 0 and not self.train:
             affs_list = [self.ignored_objects[0]]
         else:
             affs_list = [str(a) for a in self.aff_range if str(a) in self.affordances.keys()]
-        #for i in self.aff_range:
         for i in affs_list:
-            #categories = [c.split("_")[0] for c in self.affordances[str(i)]]
-            #categories = list(sorted(set([c for c in categories if categories.count(c) >= self.num_samples_per_class])))
-            #categories = list(sorted(set([c for c in self.objects.keys() if categories.count(c.split("_")[0]) >= self.num_samples_per_class])))
             new_pairs = []
             for j in self.affordances[str(i)]: #categories:
                 new_pairs.append([str(i),j])
@@ -186,11 +168,17 @@ class Affordances:
                 if angle > math.pi/2.0:
                     angle -= math.pi
                 angle = angle / (math.pi / 2.0) #Scale to [-1, 1]
-                init_inputs[i,j] = self.inputs[sample[1]]
-                if self.include_angles:
-                    outputs[i, j] = np.array([obj[1][0],obj[1][1], angle])*self.weights
+                if self.grasp_params:
+                    if self.include_angles:
+                        init_inputs[i,j] = np.concatenate((self.inputs[sample[1]], np.squeeze(np.array([obj[1]]))))
+                    else:
+                        init_inputs[i,j] = np.concatenate((self.inputs[sample[1]], np.squeeze(np.array([obj[1][:2]]))))
                 else:
-                    outputs[i, j] = np.array([obj[1][0],obj[1][1]])*self.weights
+                    init_inputs[i,j] = self.inputs[sample[1]]
+                if self.include_angles:
+                    outputs[i, j] = np.array([obj[-1][0],obj[-1][1], angle])*self.weights
+                else:
+                    outputs[i, j] = np.array([obj[-1][0],obj[-1][1]])*self.weights
         return init_inputs, outputs
 
     def all_samples(self, aff):
@@ -199,10 +187,13 @@ class Affordances:
         init_inputs = np.zeros([len(obj_keys), self.dim_input + self.dim_params])
         for j in range(len(obj_keys)):
             obj = [i for i in self.objects[obj_keys[j]] if i[0] == int(aff)][0]
-            init_inputs[j] = self.inputs[obj_keys[j]]
+            if self.grasp_params:
+                init_inputs[j] = np.concatenate((self.inputs[obj_keys[j]], np.squeeze(np.array([self.objects[obj_keys[j]][1]]))))
+            else:
+                init_inputs[j] = self.inputs[obj_keys[j]]
             #outputs[0,j,0] = obj[1][0]
             #outputs[0,j,1] = obj[1][1]
-            outputs[j] = np.array([obj[1][0],obj[1][1]])
+            outputs[j] = np.array([obj[-1][0],obj[-1][1]])
         return init_inputs, outputs
 
 class Affordances2D(Affordances):
@@ -211,7 +202,8 @@ class Affordances2D(Affordances):
 
 class Affordances2DTT(Affordances):
     def __init__(self, batchsz, k_shot, k_qry, num_grasps, split, train, split_cat):
-        super(Affordances2D, self).__init__(batchsz, k_shot, k_qry, num_grasps, split, train, split_cat, include_angles=False,grasp_params=True)
+        super(Affordances2DTT, self).__init__(batchsz, k_shot, k_qry, num_grasps, split, train, split_cat, include_angles=False,grasp_params=True)
+
 if __name__ == '__main__':
     IN = Affordances(5,3,3,0.5,1,1)
     data = IN.next()

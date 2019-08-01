@@ -146,16 +146,12 @@ if __name__ == '__main__':
     split = 0.4
     img_data = ImageNetData(split)
     cats,objs = img_data.load_categories()
-    tr1, ts1, tr2, ts2 = img_data.train_test_split(cats, objs)
-    with open(img_data.base_dir + "train_cat_categories-" + str(split) + ".pkl", 'wb') as handle:
-        pickle.dump(tr1, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    with open(img_data.base_dir + "test_cat_categories-" + str(split) + ".pkl", 'wb') as handle:
-        pickle.dump(ts1, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    with open(img_data.base_dir + "train_obj_categories-" + str(split) + ".pkl", 'wb') as handle:
-        pickle.dump(tr2, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    with open(img_data.base_dir + "test_obj_categories-" + str(split) + ".pkl", 'wb') as handle:
-        pickle.dump(ts2, handle, protocol=pickle.HIGHEST_PROTOCOL)
-
+    #tr1, ts1, tr2, ts2 = img_data.train_test_split(cats, objs)
+    categories = list(sorted(cats.keys()))
+    for i in range(len(categories)):
+        with open(img_data.base_dir + "category_" + str(i) + ".pkl", 'wb') as handle:
+            pickle.dump(cats[categories[i]], handle, protocol=pickle.HIGHEST_PROTOCOL)
+    pdb.set_trace()
     print("Saved categories. Computing grasps...")
     outputs = img_data.load_grasps(cats)
     with open(img_data.base_dir + "all_outs.pkl", 'wb') as handle:
