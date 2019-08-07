@@ -116,7 +116,7 @@ class Meta(nn.Module):
                 #loss = F.mse_loss(logits, y_spt[i])
                 # 2. compute grad on theta_pi
                 grad = torch.autograd.grad(loss, filter(lambda p: p.requires_grad, fast_weights)) #line 6 in alg
-                fast_weights = list(self.net.parameters())[:(-1)*num_tuned_layers] + list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, filter(lambda p: p.requires_grad, self.net.parameters()))))
+                fast_weights = list(self.net.parameters())[:(-1)*num_tuned_layers] + list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, filter(lambda p: p.requires_grad, fast_weights))))
 
                 logits_q = self.net(x_qry[i], fast_weights, bn_training=True, param_tensor=p_qry[i])
                 loss_q = self.weighted_mse_loss(logits_q, y_qry[i], weights)

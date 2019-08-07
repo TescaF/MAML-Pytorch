@@ -22,13 +22,14 @@ class LeaveoutGrasps:
         :param k_qry:
         :param imgsz:
         """
+        self.batch_size = batchsz
         self.rand = RandomState(222)
         fts_loc = "/home/tesca/data/cornell_grasps/all_fts.pkl"
         out_loc = "/home/tesca/data/cornell_grasps/all_outs.pkl"
         cat_range = list(range(93))
+        self.categories = dict()
         if train:
             if split_cat == 1:
-                self.categories = dict()
                 for i in cat_range:
                     if not i == split:
                         cat_loc = "/home/tesca/data/cornell_grasps/category_" + str(i) + ".pkl"
@@ -40,6 +41,7 @@ class LeaveoutGrasps:
                 cat_loc = "/home/tesca/data/cornell_grasps/category_" + str(split) + ".pkl"
                 with open(cat_loc, 'rb') as handle:
                     self.categories[str(split)] = pickle.load(handle)
+                self.batch_size=1
             else:
                 cat_loc = "/home/tesca/data/cornell_grasps/test_obj_categories-" + str(split) + ".pkl"
 
@@ -48,7 +50,6 @@ class LeaveoutGrasps:
         with open(out_loc, 'rb') as handle:
             self.grasps = pickle.load(handle)       #dict(img) = [[angle, x, y], ... ]
 
-        self.batch_size = batchsz
         self.num_grasps_per_sample = num_grasps
         self.dim_input = 4096
         self.dim_output = 2#self.outputs[0].shape[0]-1 #self.dataset[1].shape[0]

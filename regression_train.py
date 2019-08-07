@@ -28,6 +28,17 @@ def main(args):
     data_params = {'affordances':affordances, 'cat_grasps':cat_grasps, 'affordances_2d':affordances_2d, 'affordances_tt':affordances_tt, 'leaveout_grasps':leaveout_grasps}
     func_data = data_params[args.func_type]
 
+    if args.func_type == "cat_grasps":
+        dim_hidden = [4096,[512,513], 128]
+    if args.func_type == "leaveout_grasps":
+        dim_hidden = [4096,[512,513], 128]
+    if args.func_type == "affordances":
+        dim_hidden = [4096,512, 128]
+    if args.func_type == "affordances_2d":
+        dim_hidden = [4096,512, 128]
+    if args.func_type == "affordances_tt":
+        dim_hidden = [4096,[512,514], 128]
+
     if args.leave_out >= 0:
         split_txt = ''
         split_num = args.leave_out
@@ -54,16 +65,6 @@ def main(args):
 
     print(args)
 
-    if args.func_type == "cat_grasps":
-        dim_hidden = [4096,[512,513], 128]
-    if args.func_type == "leaveout_grasps":
-        dim_hidden = [4096,[512,513], 128]
-    if args.func_type == "affordances":
-        dim_hidden = [4096,512, 128]
-    if args.func_type == "affordances_2d":
-        dim_hidden = [4096,512, 128]
-    if args.func_type == "affordances_tt":
-        dim_hidden = [4096,[512,514], 128]
 
     #dim_hidden = [4096,500]
     #dim_hidden = [40,40]

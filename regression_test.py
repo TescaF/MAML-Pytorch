@@ -14,6 +14,7 @@ from    torch.nn import functional as F
 from copy import deepcopy
 import itertools
 from meta import Meta
+from leave_out_grasps import LeaveoutGrasps
 from categorized_grasps import CategorizedGrasps
 from affordances import Affordances, Affordances2D, Affordances2DTT
 
@@ -27,8 +28,20 @@ def main(args):
     affordances = {'name':'affordances', 'class':Affordances, 'dims':[4096,3,0]} #third number is param length
     affordances_2d = {'name':'affordances_2d', 'class':Affordances2D, 'dims':[4096,2,0]} #third number is param length
     affordances_tt = {'name':'affordances_tt', 'class':Affordances2DTT, 'dims':[4096,2,2]} #third number is param length
-    data_params = {'affordances':affordances, 'cat_grasps':cat_grasps, 'affordances_2d':affordances_2d, 'affordances_tt':affordances_tt}
+    leaveout_grasps = {'name':'leaveout_grasps', 'class':LeaveoutGrasps, 'dims':[4096,2,1]} #third number is param length
+    data_params = {'affordances':affordances, 'cat_grasps':cat_grasps, 'affordances_2d':affordances_2d, 'affordances_tt':affordances_tt, 'leaveout_grasps':leaveout_grasps}
     func_data = data_params[args.func_type]
+
+    if args.func_type == "cat_grasps":
+        dim_hidden = [4096,[512,513], 128]
+    if args.func_type == "leaveout_grasps":
+        dim_hidden = [4096,[512,513], 128]
+    if args.func_type == "affordances":
+        dim_hidden = [4096,512, 128]
+    if args.func_type == "affordances_2d":
+        dim_hidden = [4096,512, 128]
+    if args.func_type == "affordances_tt":
+        dim_hidden = [4096,[512,514], 128]
 
     if args.leave_out >= 0:
         split_txt = ''
@@ -80,14 +93,6 @@ def main(args):
     torch.cuda.synchronize()
 
     #dim_hidden = [4096,500]
-    if args.func_type == "cat_grasps":
-        dim_hidden = [4096,[512,513], 128]
-    if args.func_type == "affordances":
-        dim_hidden = [4096,512, 128]
-    if args.func_type == "affordances_2d":
-        dim_hidden = [4096,512, 128]
-    if args.func_type == "affordances_tt":
-        dim_hidden = [4096,[512,514], 128]
 
     #dim_hidden = [40,40]
     dims = func_data['dims']
@@ -255,20 +260,20 @@ def main(args):
                     all_accs[i].append(test_acc)
                 #if not args.al_method == "random":
                 #    print("\n" + str(queries[2]))
-    for j in range(len(all_accs)):
-        if False: #args.al_method == "random":
-            sum_vals = np.sum(np.array(all_accs),2)[0]
-            min_idx = np.argmin(sum_vals)
-            sum_f = ['{:.2e}'.format(i) for i in [sum_vals[min_idx]]]
-            accs_val = np.array(all_accs[j])[min_idx]
-            accs_f = ['{:.2e}'.format(i) for i in accs_val]
-            print("\n" + str(orderings[min_idx]))
-        if True:
-            accs_val = np.array(all_accs[j]).mean(axis=0).astype(np.float16)
-            accs_f = ['{:.2e}'.format(i) for i in accs_val]
-            sum_vals = np.sum(np.array(all_accs),2)[0]
-            sum_f = ['{:.2e}'.format(i) for i in sum_vals]
+    avg_accs = []
+    avg_vars = []
+    avg_sums = []
+    iter_num = len(orderings)
+    for t in range(len(all_accs)):
+        for j in range(0,len(all_accs[t]),iter_num):
+            avg_accs.append(np.array(all_accs[t][j:j+iter_num]).mean(axis=0).astype(np.float16))
+            avg_vars.append(np.array(all_accs[t][j:j+iter_num]).var(axis=0).astype(np.float16))
+        accs_f = ['{:.2e}'.format(i) for i in np.stack(avg_accs).mean(axis=0)]
+        var_f = ['{:.2e}'.format(i) for i in np.stack(avg_vars).mean(axis=0)]
+        sum_f = ['{:.2e}'.format(np.sum(np.stack(avg_accs),1).mean())]
         print('Loss:', accs_f)
+        print('Var: ', var_f)
+        print('Sum: ', sum_f)
         #print('Sum:', sum_f)
         #print('\nTask ' + str(j) + ' loss:', accs_val)
 
