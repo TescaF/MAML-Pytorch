@@ -7,7 +7,8 @@ from    torch.optim import lr_scheduler
 import  random, sys, pickle
 import  argparse
 
-from al_meta import Meta
+from meta2 import Meta
+#from al_meta import Meta
 
 
 def mean_confidence_interval(accs, confidence=0.95):
@@ -76,21 +77,27 @@ def main():
             if step % 30 == 0:
                 print('step:', step, '\ttraining acc:', accs)
 
-            if step > 0 and step % 500 == 0:  # evaluation
+            if step % 500 == 0:  # evaluation
                 db_test = DataLoader(mini_test, 1, shuffle=True, num_workers=1, pin_memory=True)
-                accs_all_test = []
+                al_accs, accs_all_test = [], []
 
                 for x_spt, y_spt, x_qry, y_qry in db_test:
                     x_spt, y_spt, x_qry, y_qry = x_spt.squeeze(0).to(device), y_spt.squeeze(0).to(device), \
                                                  x_qry.squeeze(0).to(device), y_qry.squeeze(0).to(device)
-
+                    if args.train_al == 1:
+                        al_accs.append(maml.al_test(x_spt, y_spt))
                     accs,_ = maml.finetunning(x_spt, y_spt, x_qry, y_qry)
                     accs_all_test.append(accs)
 
                 # [b, update_step+1]
                 accs = np.array(accs_all_test).mean(axis=0).astype(np.float16)
                 print('Test acc:', accs)
-                torch.save(maml.state_dict(), save_path + str(step) + ".pt")
+                if args.train_al == 1:
+                    al_accs = np.array(al_accs).mean(axis=0).astype(np.float16)
+                    print('AL acc:', al_accs)
+                    torch.save(maml.state_dict(), save_path + str(step) + "-trained_al.pt")
+                else:
+                    torch.save(maml.state_dict(), save_path + str(step) + ".pt")
 
 
 
@@ -108,6 +115,7 @@ if __name__ == '__main__':
     argparser.add_argument('--update_lr', type=float, help='task-level inner update learning rate', default=0.01)
     argparser.add_argument('--update_step', type=int, help='task-level inner update steps', default=5)
     argparser.add_argument('--update_step_test', type=int, help='update steps for finetunning', default=10)
+    argparser.add_argument('--train_al', type=int, help='sets whether to use AL loss in updates', default=0)
 
     args = argparser.parse_args()
 

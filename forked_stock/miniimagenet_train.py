@@ -1,4 +1,4 @@
-import  torch, os
+import  torch, os, pdb
 import  numpy as np
 from    MiniImagenet import MiniImagenet
 import  scipy.stats
@@ -84,13 +84,13 @@ def main():
                     x_spt, y_spt, x_qry, y_qry = x_spt.squeeze(0).to(device), y_spt.squeeze(0).to(device), \
                                                  x_qry.squeeze(0).to(device), y_qry.squeeze(0).to(device)
 
-                    accs = maml.finetunning(x_spt, y_spt, x_qry, y_qry)
+                    accs,_ = maml.finetunning(x_spt, y_spt, x_qry, y_qry)
                     accs_all_test.append(accs)
 
                 # [b, update_step+1]
                 accs = np.array(accs_all_test).mean(axis=0).astype(np.float16)
                 print('Test acc:', accs)
-                torch.save(maml.state_dict(), save_path + str(step) + ".pt")
+                torch.save(maml.state_dict(), save_path + str(step) + "_og.pt")
 
 
 

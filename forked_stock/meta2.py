@@ -40,7 +40,7 @@ class Meta(nn.Module):
         self.task_num = args.task_num
         self.update_step = args.update_step
         self.update_step_test = args.update_step_test
-
+        self.train_al = args.train_al == 1
 
         self.net = Learner(config, args.imgc, args.imgsz)
         self.meta_optim = optim.Adam(self.net.parameters(), lr=self.meta_lr)
@@ -71,6 +71,49 @@ class Meta(nn.Module):
 
         return total_norm/counter
 
+    def al_dataset(self, x, y):
+        sample_loss = self.samplewise_loss(x,y)
+        ## Get AL labels
+        inputs, labels = [], []
+        for j in range(x.shape[0]):
+            for k in range(x.shape[0]):
+                if j == k:
+                    continue
+                if sample_loss[j] < sample_loss[k]:
+                    labels.append(1)
+                else:
+                    labels.append(-1)
+                inputs.append(x[j] - x[k])
+        inputs = torch.stack(inputs)
+        labels = torch.cuda.FloatTensor(labels)
+        return inputs, labels
+
+    def samplewise_loss(self, x, y):
+        ## Get training loss for each sample
+        sample_loss = []
+        for s in range(x.shape[0]):
+            s_weights = None
+            for k in range(self.update_step):
+                logits = self.net(x[s].unsqueeze(0), vars=s_weights, bn_training=True)
+                loss = F.cross_entropy(logits[:,:-1], y[s].unsqueeze(0))
+                if s_weights is None:
+                    grad = torch.autograd.grad(loss, self.net.parameters())
+                    s_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, self.net.parameters())))
+                else:
+                    grad = torch.autograd.grad(loss, s_weights)
+                    s_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, s_weights)))
+                del loss
+                del logits
+                del grad
+                torch.cuda.empty_cache()
+            logits_q = self.net(x, s_weights, bn_training=True)[:,:-1]
+            loss_q = F.cross_entropy(logits_q, y)
+            sample_loss.append(loss_q.item())
+            del logits_q
+            del s_weights
+            torch.cuda.empty_cache()
+        return sample_loss
+
     def forward(self, x_spt, y_spt, x_qry, y_qry):
         """
 
@@ -88,58 +131,55 @@ class Meta(nn.Module):
 
         all_al_loss = 0
         for i in range(task_num):
-            sample_loss = []
-            for s in range(setsz):
-                s_weights = None
+            if self.train_al:
+                al_inputs, al_labels = self.al_dataset(x_spt[i], y_spt[i])
+            ## Train over all samples
+            s_weights = None
+            logits_q = self.net(x_qry[i], None, bn_training=True)[:,:-1]
+            with torch.no_grad():
+                pred_q = F.softmax(logits_q, dim=1).argmax(dim=1)
+                correct = torch.eq(pred_q, y_qry[i]).sum().item()  # convert to numpy
+                del pred_q
+                corrects[0] = corrects[0] + correct
+            # Get final losses
+            for k in range(self.update_step):
+                logits_a = self.net(x_spt[i], vars=s_weights, bn_training=True)[:,:-1]
+                loss_a = F.cross_entropy(logits_a, y_spt[i])
+                if self.train_al:
+                    logits_b = self.net(al_inputs, vars=s_weights, bn_training=True)[:,-1]
+                    loss_b = torch.sum(torch.clamp(torch.ones_like(al_labels) - torch.mul(logits_b, al_labels), -np.inf,0))/al_labels.shape[0]
+                    loss = loss_a - loss_b
+                else:
+                    loss = loss_a
+                if s_weights is None:
+                    grad = torch.autograd.grad(loss, self.net.parameters())
+                    s_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, self.net.parameters())))
+                else:
+                    grad = torch.autograd.grad(loss, s_weights)
+                    s_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, s_weights)))
+                del loss_a
+                del logits_a
+                if self.train_al:
+                    del loss_b
+                    del logits_b
+                del grad
+
+                logits_q = self.net(x_qry[i], s_weights, bn_training=True)[:,:-1]
+
                 with torch.no_grad():
-                    logits_q = self.net(x_qry[i], None, bn_training=True)[:,:-1]
                     pred_q = F.softmax(logits_q, dim=1).argmax(dim=1)
                     correct = torch.eq(pred_q, y_qry[i]).sum().item()  # convert to numpy
                     del pred_q
-                    corrects[0] = corrects[0] + correct
-                for k in range(self.update_step):
-                    logits = self.net(torch.cat([x_spt[i,:s],x_spt[i,s+1:]]), vars=s_weights, bn_training=True)
-                    loss = F.cross_entropy(logits[:,:-1], torch.cat([y_spt[i,:s],y_spt[i,s+1:]]))
-                    if s_weights is None:
-                        grad = torch.autograd.grad(loss, self.net.parameters())
-                        s_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, self.net.parameters())))
-                    else:
-                        grad = torch.autograd.grad(loss, s_weights)
-                        s_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, s_weights)))
-                    del loss
-                    del logits
-
-                    logits_q = self.net(x_qry[i], s_weights, bn_training=True)[:,:-1]
-                    # loss_q will be overwritten and just keep the loss_q on last update step.
-
-                    with torch.no_grad():
-                        pred_q = F.softmax(logits_q, dim=1).argmax(dim=1)
-                        correct = torch.eq(pred_q, y_qry[i]).sum().item()  # convert to numpy
-                        del pred_q
-                        corrects[k + 1] = corrects[k + 1] + correct
-                loss_q = F.cross_entropy(logits_q, y_qry[i])
-                sample_loss.append(loss_q)
-            comps = []
-            for j in range(setsz):
-                for k in range(setsz):
-                    if j == k:
-                        continue
-                    if sample_loss[j] < sample_loss[k]:
-                        al_label = 1
-                    else:
-                        al_label = -1
-                    comps.append(al_label)
-                    al_input = (x_spt[i,j] - x_spt[i,k]).unsqueeze(0)
-                    al_logits = self.net(al_input, vars=None, bn_training=False)[:,-1]
-                    al_loss = max(0, 1 - torch.mul(al_logits, al_label))
-                    all_al_loss += al_loss
-        la = torch.mean(torch.stack(sample_loss))
-        lb = all_al_loss[0]/(setsz**2) #+ all_al_loss[0]
-        losses_q = la + lb #torch.mean(torch.stack(sample_loss)) + all_al_loss[0]/(setsz**2) #+ all_al_loss[0]
-        #print("sample loss: " + str(la.item()))
-        #print("al loss: " + str(lb.item()))
-        del sample_loss
-
+                    corrects[k + 1] = corrects[k + 1] + correct
+            # Get final losses
+            loss_a = F.cross_entropy(logits_q, y_qry[i])
+            if self.train_al:
+                al_inputs, al_labels = self.al_dataset(x_qry[i], y_qry[i])
+                logits_b = self.net(al_inputs, vars=s_weights, bn_training=True)[:,-1]
+                loss_b = torch.sum(torch.clamp(torch.ones_like(al_labels) - torch.mul(logits_b, al_labels), -np.inf,0))/al_labels.shape[0]
+                losses_q += (loss_a - loss_b)
+            else:
+                losses_q += loss_a
         # end of all tasks
         # sum over all losses on query set across all tasks
         loss_q = losses_q / task_num
@@ -153,10 +193,15 @@ class Meta(nn.Module):
         self.meta_optim.step()
 
 
-        accs = np.array(corrects) / (setsz * querysz * task_num)
+        accs = np.array(corrects) / (querysz * task_num)
 
         return accs
 
+    def al_test(self, x, y):
+        al_inputs, al_labels = self.al_dataset(x, y)
+        logits = self.net(al_inputs, vars=self.net.parameters(), bn_training=True)[:,-1]
+        loss = torch.sum(torch.clamp(torch.ones_like(al_labels) - torch.mul(logits, al_labels), -np.inf,0)).item()/al_labels.shape[0]
+        return loss 
 
     def finetunning(self, x_spt, y_spt, x_qry, y_qry):
         """

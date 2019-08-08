@@ -49,12 +49,16 @@ def main():
     ]
 
     last_epoch = 1000
-    save_path = os.getcwd() + '/data/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_epoch' + str(last_epoch) + '.pt'
+    if args.train_al == 1:
+        suffix = "-trained_al"
+    else:
+        suffix = "_og"
+    save_path = os.getcwd() + '/data/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_epoch' + str(last_epoch) + suffix + '.pt'
     while os.path.isfile(save_path):
         valid_epoch = last_epoch
         last_epoch += 1000
-        save_path = os.getcwd() + '/data/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_epoch' + str(last_epoch) + '.pt'
-    save_path = os.getcwd() + '/data/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_epoch' + str(valid_epoch) + '.pt'
+        save_path = os.getcwd() + '/data/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_epoch' + str(last_epoch) + suffix + '.pt'
+    save_path = os.getcwd() + '/data/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_epoch' + str(valid_epoch) + suffix+ '.pt'
 
     device = torch.device('cuda')
     mod = Meta(args, config).to(device)
@@ -144,6 +148,7 @@ if __name__ == '__main__':
     argparser.add_argument('--update_step_test', type=int, help='update steps for finetunning', default=10)
     argparser.add_argument('--al_method', type=str, help='active learning method', default='random')
     argparser.add_argument('--dropout_rate', type=float, help='task-level inner update learning rate', default=-1)
+    argparser.add_argument('--train_al', type=int, help='sets whether to use AL loss in updates', default=0)
 
     args = argparser.parse_args()
 
