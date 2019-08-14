@@ -44,7 +44,7 @@ class Meta(nn.Module):
         self.train_al = args.train_al == 1
         self.alpha = args.alpha
         self.net = Learner(config, args.imgc, args.imgsz)
-        al_config = [('linear', [self.an, 32*5*5])]
+        al_config = [('linear', [self.an, config[-1][-1][-1]])]
         self.al_net = Learner(al_config, args.imgc, args.imgsz)
         self.meta_optim = optim.Adam(self.net.parameters(), lr=self.meta_lr)
 
@@ -99,7 +99,7 @@ class Meta(nn.Module):
         for s in range(x.shape[0]):
             s_weights = w
             for k in range(self.update_step):
-                logits = self.net(x[s].unsqueeze(0), vars=s_weights, bn_training=True)[:,:-self.an]
+                logits = self.net(x[s].unsqueeze(0), vars=s_weights, bn_training=False)[:,:-self.an]
                 loss = F.cross_entropy(logits, y[s].unsqueeze(0))
                 if np.isnan(loss.item()):
                     del logits, loss
@@ -114,15 +114,9 @@ class Meta(nn.Module):
                 del logits
                 del grad
                 torch.cuda.empty_cache()
-                logits_q = self.net(x, s_weights, bn_training=True)[:,-self.an:]
-            if self.an == 1:
-                loss_q = self.smooth_hinge_loss(logits_q, y)
-            if self.an == 2:
-                loss_q = F.cross_entropy(logits_q, y)
-            if loss_q == -1:
-                sample_loss.append(loss_q)
-            else:
-                sample_loss.append(loss_q.item())
+                logits_q = self.net(x, s_weights, bn_training=True)[:,:-self.an]
+            loss_q = F.cross_entropy(logits_q, y)
+            sample_loss.append(loss_q.item())
             del logits_q
             del s_weights
             torch.cuda.empty_cache()

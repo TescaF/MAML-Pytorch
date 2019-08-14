@@ -136,16 +136,18 @@ class Learner(nn.Module):
 
         idx = start_idx
         bn_idx = start_bn
+        if idx > 0:
+            c = -1
+        else:
+            c = 0
 
-        for name, param in self.config[start_idx:]:
+        for name, param in self.config[c:]:
             if hook == idx:
                 hook_data = x
             if dropout_rate > 0:
                 x = F.dropout(x, p=dropout_rate, training=True)
             if torch.isnan(x).any():
                 pdb.set_trace()
-            else:
-                prev_x = x.clone()
             if name is 'conv2d':
                 w, b = vars[idx], vars[idx + 1]
                 # remember to keep synchrozied of forward_encoder and forward_decoder!
@@ -195,6 +197,8 @@ class Learner(nn.Module):
                 raise NotImplementedError
 
         # make sure variable is used properly
+        if not idx == len(vars):
+            pdb.set_trace()
         assert idx == len(vars)
         assert bn_idx == len(self.vars_bn)
 
