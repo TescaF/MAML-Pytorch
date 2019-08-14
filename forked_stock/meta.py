@@ -215,7 +215,7 @@ class Meta(nn.Module):
 
         accs = np.array(corrects) / querysz
 
-        return accs,fast_weights
+        return accs,fast_weights, loss_q
 
 
 

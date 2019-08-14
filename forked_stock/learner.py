@@ -1,3 +1,4 @@
+import pdb
 import  torch
 from    torch import nn
 from    torch.nn import functional as F
@@ -118,7 +119,7 @@ class Learner(nn.Module):
 
 
 
-    def forward(self, x, vars=None, bn_training=True,dropout_rate=-1):
+    def forward(self, x, vars=None, bn_training=True,dropout_rate=-1, hook=None, start_idx=0, start_bn=0):
         """
         This function can be called by finetunning, however, in finetunning, we dont wish to update
         running_mean/running_var. Thought weights/bias of bn is updated, it has been separated by fast_weights.
@@ -133,10 +134,12 @@ class Learner(nn.Module):
         if vars is None:
             vars = self.vars
 
-        idx = 0
-        bn_idx = 0
+        idx = start_idx
+        bn_idx = start_bn
 
-        for name, param in self.config:
+        for name, param in self.config[start_idx:]:
+            if hook == idx:
+                hook_data = x
             if dropout_rate > 0:
                 x = F.dropout(x, p=dropout_rate, training=True)
             if name is 'conv2d':
@@ -191,8 +194,10 @@ class Learner(nn.Module):
         assert idx == len(vars)
         assert bn_idx == len(self.vars_bn)
 
-
-        return x
+        if hook is None:
+            return x
+        else:
+            return hook_data
 
 
     def zero_grad(self, vars=None):

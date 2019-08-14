@@ -67,6 +67,35 @@ def al_method_grad(mod, w, x_cand, avail_cands, args, c):
     idx = np.argmax(np.array(exp_grads))'''
     return avail_cands[np.argmax(np.array(grad_ests))] # max_min_dists[idx][0]
 
+def al_method_learned(mod, tuned_w, cand_data, avail_cand_idx, update=False):
+    if update:
+        w = tuned_w
+    else:
+        w = mod.parameters()
+    raw_comps, comps = [], []
+    diffs = []
+    for i in range(cand_data.shape[0]):
+        c = []
+        for j in range(cand_data.shape[0]):
+            if i == j:
+                continue
+            c.append(cand_data[i] - cand_data[j])
+        diffs.append(torch.stack(c))
+    diffs = torch.cat(diffs)
+    ests = mod(diffs, vars = w, bn_training=True)[:,-1]
+    split_ests = torch.split(ests, cand_data.shape[0]-1)
+    comps = [torch.sum(torch.sign(split_ests[i])).item() for i in range(cand_data.shape[0])]
+    raw_comps = [torch.sum(split_ests[i]).item() for i in range(cand_data.shape[0])]
+    #comps.append(torch.sum(torch.sign(ests)).item())
+    #raw_comps.append(torch.sum(ests).item())
+    idxs = np.argsort(np.array(comps))
+    raw_idxs = np.argsort(np.array(raw_comps))
+    return idxs
+    #for i in idxs:
+    #    if i in avail_cand_idx:
+    #        return i
+    
+
 def al_method_dropout(mod, tuned_w, cand_data, avail_cand_idx, args):
     if tuned_w is None:
         tuned_w = mod.parameters()
@@ -134,7 +163,7 @@ class QuerySelector():
         self.query_order = []
 
     def all_queries(self, cands, k):
-        orderings = [np.random.permutation(cands) for _ in range(200)]
+        orderings = [np.random.permutation(cands) for _ in range(10)]
         queries = []
         for o in orderings:
             queries.append([cands[i] for i in o])
@@ -150,9 +179,7 @@ class QuerySelector():
         if method == "random":
            if len(self.query_order) == 0:
                 self.query_order = self.all_queries(avail_cands, k)
-           for q in self.query_order[self.order_idx]:
-                if q in avail_cands:
-                    return q
+           s = self.query_order[self.order_idx].pop(0)
         if method == "output_space":
             s = al_method_k_centers(net, w, cands, avail_cands, targets, dist_metric="output")
         if method == "input_space":
@@ -165,5 +192,12 @@ class QuerySelector():
             s = al_method_gaussian(net, w, cands)
         if method == "gradient":
             s = al_method_grad(net, w, cands, avail_cands, args, classification)
+        if method == "learned":
+           if len(self.query_order) == 0:
+                self.query_order = list(al_method_learned(net, w, cands, avail_cands))
+           s = self.query_order.pop(0)
+           #for q in self.query_order:
+           #     if q in avail_cands:
+           #         return q
         return s
 
