@@ -44,8 +44,9 @@ class Meta(nn.Module):
         self.train_al = args.train_al == 1
         self.alpha = args.alpha
         self.net = Learner(config, args.imgc, args.imgsz)
+        al_config = [('linear', [self.an, 32*5*5])]
+        self.al_net = Learner(al_config, args.imgc, args.imgsz)
         self.meta_optim = optim.Adam(self.net.parameters(), lr=self.meta_lr)
-        self.al_optim = optim.Adam(self.net.parameters(), lr=self.meta_lr)
 
 
 
@@ -77,11 +78,11 @@ class Meta(nn.Module):
         sample_loss = self.samplewise_loss(x,y,w)
         ## Get AL labels
         inputs, labels = [], []
-        hooks = self.net(x, vars=w, bn_training=False,hook=16)
+        hooks = self.net(x, vars=w, bn_training=True,hook=16)
         for j in range(x.shape[0]):
             for k in range(x.shape[0]):
                 diff = sample_loss[j] - sample_loss[k]
-                if diff == 0:
+                if diff == 0 or sample_loss[j] == -1 or sample_loss[k] == -1:
                     continue
                 labels.append(np.sign(diff))
                 inputs.append(hooks[j] - hooks[k])
@@ -98,8 +99,11 @@ class Meta(nn.Module):
         for s in range(x.shape[0]):
             s_weights = w
             for k in range(self.update_step):
-                logits = self.net(x[s].unsqueeze(0), vars=s_weights, bn_training=False)
-                loss = F.cross_entropy(logits[:,:-self.an], y[s].unsqueeze(0))
+                logits = self.net(x[s].unsqueeze(0), vars=s_weights, bn_training=True)[:,:-self.an]
+                loss = F.cross_entropy(logits, y[s].unsqueeze(0))
+                if np.isnan(loss.item()):
+                    del logits, loss
+                    continue #pdb.set_trace()
                 if s_weights is None:
                     grad = torch.autograd.grad(loss, self.net.parameters())
                     s_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, self.net.parameters())))
@@ -110,12 +114,15 @@ class Meta(nn.Module):
                 del logits
                 del grad
                 torch.cuda.empty_cache()
-            logits_q = self.net(x, s_weights, bn_training=False)[:,-self.an:]
+                logits_q = self.net(x, s_weights, bn_training=True)[:,-self.an:]
             if self.an == 1:
                 loss_q = self.smooth_hinge_loss(logits_q, y)
             if self.an == 2:
                 loss_q = F.cross_entropy(logits_q, y)
-            sample_loss.append(loss_q.item())
+            if loss_q == -1:
+                sample_loss.append(loss_q)
+            else:
+                sample_loss.append(loss_q.item())
             del logits_q
             del s_weights
             torch.cuda.empty_cache()
@@ -123,6 +130,9 @@ class Meta(nn.Module):
 
     def smooth_hinge_loss(self, y, l):
         loss = 0.0
+        if np.isnan(y[0].item()):
+            print("Output is NaN")
+            return -1
         for i in range(y.shape[0]):
             ty = y[i] * l[i]
             if ty <= 0:
@@ -151,11 +161,11 @@ class Meta(nn.Module):
         for i in range(task_num):
             ## Train over all samples
             s_weights = self.net.parameters()
-            al_weights = deepcopy(list(self.net.parameters()))
-            for p in al_weights:
+            al_weights = self.al_net.parameters() #deepcopy(list(self.net.parameters()))
+            '''for p in al_weights:
                 p.requires_grad = False
             list(al_weights)[-1].requires_grad = True
-            list(al_weights)[-2].requires_grad = True
+            list(al_weights)[-2].requires_grad = True'''
 
             logits_q = self.net(x_qry[i], None, bn_training=True)[:,:-self.an]
             with torch.no_grad():
@@ -173,14 +183,15 @@ class Meta(nn.Module):
                 del loss, logits_a, grad_a
 
                 # AL loss
-                logits_b = self.net(al_inputs, vars=al_weights, bn_training=True, start_idx=16, start_bn=8)[:,-self.an:]
+                logits_b = self.al_net(al_inputs, vars=al_weights, bn_training=True)
+                #logits_b = self.net(al_inputs, vars=al_weights, bn_training=True, start_idx=16, start_bn=8)[:,-self.an:]
                 if self.an == 1:
                     loss_b = self.smooth_hinge_loss(logits_b, al_labels)
                 if self.an == 2:
                     loss_b = F.cross_entropy(logits_b, al_labels)
 
-                grad_b = torch.autograd.grad(loss_b, filter(lambda p: p.requires_grad, al_weights))
-                al_weights = al_weights[:-2] + list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad_b, filter(lambda p: p.requires_grad, al_weights))))
+                grad_b = torch.autograd.grad(loss_b, al_weights)
+                al_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad_b, al_weights)))
 
                 del loss_b, logits_b, grad_b
 
@@ -193,7 +204,10 @@ class Meta(nn.Module):
                     corrects[k + 1] = corrects[k + 1] + correct
             # Get final losses
             losses_q += F.cross_entropy(logits_q, y_qry[i])
-            al_loss, al_acc = self.al_test(x_qry[i], y_qry[i], w=al_weights)
+            m_weights = deepcopy(list(self.net.parameters()))
+            m_weights[-2][-1].data = al_weights[0].squeeze(0)
+            m_weights[-1][-1].data = al_weights[1].squeeze(0)
+            al_loss, al_acc = self.al_test(x_qry[i], y_qry[i], w=m_weights)
             losses_al += al_loss
             al_corrects += al_acc
         # end of all tasks
@@ -202,7 +216,7 @@ class Meta(nn.Module):
         loss_al = losses_al / task_num
         total_loss = loss_q + loss_al
 
-        #print("total: %.2f    loss: %.2f    al: %.2f" %(total_loss, loss_q, al_loss))
+        #print("total: %.2f    loss: %.2f    al: %.2f" %(total_loss, loss_q, loss_al))
         # optimize theta parameters
         self.meta_optim.zero_grad()
         total_loss.backward()
@@ -217,7 +231,7 @@ class Meta(nn.Module):
         if w is None:
             w = self.net.parameters()
         al_inputs, al_labels = self.al_dataset(x, y, self.net.parameters())
-        logits = self.net(al_inputs, vars=w, bn_training=False, start_idx=16, start_bn=8)[:,-self.an:]
+        logits = self.net(al_inputs, vars=w, bn_training=True, start_idx=16, start_bn=8)[:,-self.an:]
         if self.an == 1:
             loss = self.smooth_hinge_loss(logits, al_labels)
             pred = torch.sign(logits)

@@ -3,7 +3,7 @@ import  torch
 from    torch import nn
 from    torch.nn import functional as F
 import  numpy as np
-
+from copy import deepcopy
 
 
 class Learner(nn.Module):
@@ -142,6 +142,10 @@ class Learner(nn.Module):
                 hook_data = x
             if dropout_rate > 0:
                 x = F.dropout(x, p=dropout_rate, training=True)
+            if torch.isnan(x).any():
+                pdb.set_trace()
+            else:
+                prev_x = x.clone()
             if name is 'conv2d':
                 w, b = vars[idx], vars[idx + 1]
                 # remember to keep synchrozied of forward_encoder and forward_decoder!
