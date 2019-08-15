@@ -25,7 +25,7 @@ class Meta(nn.Module):
     """
     Meta Learner
     """
-    def __init__(self, args, config):
+    def __init__(self, args, config, loss_fn=F.cross_entropy, accs_fn=torch.eq):
         """
 
         :param args:
@@ -47,6 +47,8 @@ class Meta(nn.Module):
         al_config = [('linear', [self.an, config[-1][-1][-1]])]
         self.al_net = Learner(al_config, args.imgc, args.imgsz)
         self.meta_optim = optim.Adam(self.net.parameters(), lr=self.meta_lr)
+        self.loss_fn = loss_fn
+        self.accs_fn = accs_fn
 
 
 
@@ -101,7 +103,8 @@ class Meta(nn.Module):
             for k in range(self.update_step):
                 xi = torch.stack([x[s], x[s]])
                 logits = self.net(xi, vars=s_weights, bn_training=True)[0,:-self.an].unsqueeze(0)
-                loss = F.cross_entropy(logits, y[s].unsqueeze(0))
+                loss = self.loss_fn(logits, y[s].unsqueeze(0))
+                #loss = F.cross_entropy(logits, y[s].unsqueeze(0))
                 if np.isnan(loss.item()):
                     del logits, loss
                     continue #pdb.set_trace()
@@ -116,7 +119,8 @@ class Meta(nn.Module):
                 del grad
                 torch.cuda.empty_cache()
                 logits_q = self.net(x, s_weights, bn_training=True)[:,:-self.an]
-            loss_q = F.cross_entropy(logits_q, y)
+            loss_q = self.loss_fn(logits_q, y)
+            #loss_q = F.cross_entropy(logits_q, y)
             sample_loss.append(loss_q.item())
             del logits_q
             del s_weights
@@ -165,14 +169,16 @@ class Meta(nn.Module):
             logits_q = self.net(x_qry[i], None, bn_training=True)[:,:-self.an]
             with torch.no_grad():
                 pred_q = F.softmax(logits_q, dim=1).argmax(dim=1)
-                correct = torch.eq(pred_q, y_qry[i]).sum().item()  # convert to numpy
+                correct = self.accs_fn(pred_q, y_qry[i]).sum().item()  # convert to numpy
+                #correct = torch.eq(pred_q, y_qry[i]).sum().item()  # convert to numpy
                 del pred_q
                 corrects[0] = corrects[0] + correct
             al_inputs, al_labels = self.al_dataset(x_qry[i], y_qry[i])
             for k in range(self.update_step):
                 # Model loss
                 logits_a = self.net(x_spt[i], vars=s_weights, bn_training=True)[:,:-self.an]
-                loss = F.cross_entropy(logits_a, y_spt[i])
+                loss = self.loss_fn(logits_a, y_spt[i])
+                #loss = F.cross_entropy(logits_a, y_spt[i])
                 grad_a = torch.autograd.grad(loss, self.net.parameters())
                 s_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad_a, self.net.parameters())))
                 del loss, logits_a, grad_a
@@ -194,11 +200,13 @@ class Meta(nn.Module):
 
                 with torch.no_grad():
                     pred_q = F.softmax(logits_q, dim=1).argmax(dim=1)
-                    correct = torch.eq(pred_q, y_qry[i]).sum().item()  # convert to numpy
+                    correct = self.accs_fn(pred_q, y_qry[i]).sum().item()  # convert to numpy
+                    #correct = torch.eq(pred_q, y_qry[i]).sum().item()  # convert to numpy
                     del pred_q
                     corrects[k + 1] = corrects[k + 1] + correct
             # Get final losses
-            losses_q += F.cross_entropy(logits_q, y_qry[i])
+            losses_q += self.loss_fn(logits_q, y_qry[i])
+            #losses_q += F.cross_entropy(logits_q, y_qry[i])
             m_weights = deepcopy(list(self.net.parameters()))
             m_weights[-2][-1].data = al_weights[0].squeeze(0)
             m_weights[-1][-1].data = al_weights[1].squeeze(0)
@@ -257,7 +265,8 @@ class Meta(nn.Module):
 
         # 1. run the i-th task and compute loss for k=0
         logits = net(x_spt)[:,:-self.an]
-        loss = F.cross_entropy(logits, y_spt)
+        loss = self.loss_fn(logits, y_spt)
+        #loss = F.cross_entropy(logits, y_spt)
         grad = torch.autograd.grad(loss, net.parameters())
         fast_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, net.parameters())))
 
@@ -268,7 +277,8 @@ class Meta(nn.Module):
             # [setsz]
             pred_q = F.softmax(logits_q, dim=1).argmax(dim=1)
             # scalar
-            correct = torch.eq(pred_q, y_qry).sum().item()
+            correct = self.accs_fn(pred_q, y_qry).sum().item()
+            #correct = torch.eq(pred_q, y_qry).sum().item()
             corrects[0] = corrects[0] + correct
 
         # this is the loss and accuracy after the first update
@@ -278,13 +288,15 @@ class Meta(nn.Module):
             # [setsz]
             pred_q = F.softmax(logits_q, dim=1).argmax(dim=1)
             # scalar
-            correct = torch.eq(pred_q, y_qry).sum().item()
+            correct = self.accs_fn(pred_q, y_qry).sum().item()
+            #correct = torch.eq(pred_q, y_qry).sum().item()
             corrects[1] = corrects[1] + correct
 
         for k in range(1, self.update_step_test):
             # 1. run the i-th task and compute loss for k=1~K-1
             logits = net(x_spt, fast_weights, bn_training=True)[:,:-self.an]
-            loss = F.cross_entropy(logits, y_spt)
+            loss = self.loss_fn(logits, y_spt)
+            #loss = F.cross_entropy(logits, y_spt)
             # 2. compute grad on theta_pi
             grad = torch.autograd.grad(loss, fast_weights)
             # 3. theta_pi = theta_pi - train_lr * grad
@@ -292,11 +304,13 @@ class Meta(nn.Module):
 
             logits_q = net(x_qry, fast_weights, bn_training=True)[:,:-self.an]
             # loss_q will be overwritten and just keep the loss_q on last update step.
-            loss_q = F.cross_entropy(logits_q, y_qry)
+            loss_q = self.loss_fn(logits_q, y_qry)
+            #loss_q = F.cross_entropy(logits_q, y_qry)
 
             with torch.no_grad():
                 pred_q = F.softmax(logits_q, dim=1).argmax(dim=1)
-                correct = torch.eq(pred_q, y_qry).sum().item()  # convert to numpy
+                correct = self.accs_fn(pred_q, y_qry).sum().item()  # convert to numpy
+                #correct = torch.eq(pred_q, y_qry).sum().item()  # convert to numpy
                 corrects[k + 1] = corrects[k + 1] + correct
 
 
