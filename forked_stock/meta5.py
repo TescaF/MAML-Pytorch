@@ -99,7 +99,8 @@ class Meta(nn.Module):
         for s in range(x.shape[0]):
             s_weights = w
             for k in range(self.update_step):
-                logits = self.net(x[s].unsqueeze(0), vars=s_weights, bn_training=False)[:,:-self.an]
+                xi = torch.stack([x[s], x[s]])
+                logits = self.net(xi, vars=s_weights, bn_training=True)[0,:-self.an].unsqueeze(0)
                 loss = F.cross_entropy(logits, y[s].unsqueeze(0))
                 if np.isnan(loss.item()):
                     del logits, loss
