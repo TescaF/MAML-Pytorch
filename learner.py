@@ -3,7 +3,7 @@ import  torch
 from    torch import nn
 from    torch.nn import functional as F
 import  numpy as np
-
+from copy import deepcopy
 
 
 class Learner(nn.Module):
@@ -11,7 +11,7 @@ class Learner(nn.Module):
 
     """
 
-    def __init__(self, config): #, imgc, imgsz):
+    def __init__(self, config, imgc, imgsz):
         """
 
         :param config: network config file, type:list of (string, list)
@@ -22,6 +22,7 @@ class Learner(nn.Module):
 
 
         self.config = config
+
         # this dict contains all tensors needed to be optimized
         self.vars = nn.ParameterList()
         # running_mean and running_var
@@ -55,15 +56,6 @@ class Learner(nn.Module):
                 # [ch_out]
                 self.vars.append(nn.Parameter(torch.zeros(param[0])))
 
-            elif name is 'fc':
-                # [ch_out, ch_in]
-                w = nn.Parameter(torch.ones(*param))
-                vals = self.truncated_normal(mean=0.0, stddev=0.01, m=w.numel())
-                w = nn.Parameter(torch.from_numpy(vals).float().view(w.shape[0], w.shape[1]))
-                self.vars.append(w)
-                # [ch_out]
-                self.vars.append(nn.Parameter(torch.zeros(param[0])))
-
             elif name is 'bn':
                 # [ch_out]
                 w = nn.Parameter(torch.ones(param[0]))
@@ -85,25 +77,7 @@ class Learner(nn.Module):
 
 
 
-    def truncated_normal(self, mean=0.0, stddev=1.0, m=1):
-        '''
-        The generated values follow a normal distribution with specified 
-        mean and standard deviation, except that values whose magnitude is 
-        more than 2 standard deviations from the mean are dropped and 
-        re-picked. Returns a vector of length m
-        '''
-        samples = []
-        for i in range(m):
-            while True:
-                sample = np.random.normal(mean, stddev)
-                if np.abs(sample) <= 2 * stddev:
-                    break
-            samples.append(sample)
-        assert len(samples) == m, "something wrong"
-        if m == 1:
-            return samples[0]
-        else:
-            return np.array(samples)
+
 
 
     def extra_repr(self):
@@ -118,10 +92,6 @@ class Learner(nn.Module):
             elif name is 'convt2d':
                 tmp = 'convTranspose2d:(ch_in:%d, ch_out:%d, k:%dx%d, stride:%d, padding:%d)'\
                       %(param[0], param[1], param[2], param[3], param[4], param[5],)
-                info += tmp + '\n'
-
-            elif name is 'fc':
-                tmp = 'fc:(in:%d, out:%d)'%(param[1], param[0])
                 info += tmp + '\n'
 
             elif name is 'linear':
@@ -149,7 +119,7 @@ class Learner(nn.Module):
 
 
 
-    def forward(self, x, vars=None, bn_training=True, param_tensor=None, dropout=[], dropout_rate=0.0, hook=None):
+    def forward(self, x, vars=None, bn_training=True,dropout_rate=-1, hook=None, start_idx=0, start_bn=0):
         """
         This function can be called by finetunning, however, in finetunning, we dont wish to update
         running_mean/running_var. Thought weights/bias of bn is updated, it has been separated by fast_weights.
@@ -163,14 +133,21 @@ class Learner(nn.Module):
 
         if vars is None:
             vars = self.vars
-        p = dropout_rate #0.4
-        idx = 0
-        bn_idx = 0
-        for name, param in self.config:
-            if not vars[idx].shape[-1] == x.shape[-1]:
-                x = torch.cat((x, param_tensor),1)
+
+        idx = start_idx
+        bn_idx = start_bn
+        if idx > 0:
+            c = -1
+        else:
+            c = 0
+
+        for name, param in self.config[c:]:
             if hook == idx:
                 hook_data = x
+            if dropout_rate > 0:
+                x = F.dropout(x, p=dropout_rate, training=True)
+            if torch.isnan(x).any():
+                pdb.set_trace()
             if name is 'conv2d':
                 w, b = vars[idx], vars[idx + 1]
                 # remember to keep synchrozied of forward_encoder and forward_decoder!
@@ -183,14 +160,8 @@ class Learner(nn.Module):
                 x = F.conv_transpose2d(x, w, b, stride=param[4], padding=param[5])
                 idx += 2
                 # print(name, param, '\tout:', x.shape)
-            elif name is 'fc':
-                w, b = vars[idx], vars[idx + 1]
-                x = F.linear(x, w, b)
-                idx += 2
             elif name is 'linear':
                 w, b = vars[idx], vars[idx + 1]
-                if idx in dropout:
-                    x = F.dropout(x, p=p, training=True)
                 x = F.linear(x, w, b)
                 idx += 2
                 # print('forward:', idx, x.norm().item())
@@ -226,8 +197,10 @@ class Learner(nn.Module):
                 raise NotImplementedError
 
         # make sure variable is used properly
+        if not idx == len(vars):
+            pdb.set_trace()
         assert idx == len(vars)
-        #assert bn_idx == len(self.vars_bn)
+        assert bn_idx == len(self.vars_bn)
 
         if hook is None:
             return x
