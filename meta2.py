@@ -82,10 +82,13 @@ class Meta(nn.Module):
 
         return total_norm/counter
 
-    def al_dataset(self, x, y, w=None,pair=False):
-        sample_loss = self.samplewise_loss(x,y,w)
+    def al_dataset(self, x, y, target_x = None, target_y = None, w=None,pair=False):
+        sample_loss = self.samplewise_loss(x,y,target_x,target_y,w)
         ## Get AL labels
         inputs, labels = [], []
+        if target_x is None:
+            target_x = x
+            target_y = y
         hooks = self.net(x, vars=w, bn_training=True,hook=16)
         for j in range(x.shape[0]):
             for k in range(x.shape[0]):
@@ -102,11 +105,14 @@ class Meta(nn.Module):
             labels = torch.cuda.FloatTensor(labels)
         if self.an == 2:
             labels = torch.cuda.LongTensor(labels)
-        return inputs, labels
+        return inputs, labels, hooks
 
-    def samplewise_loss(self, x, y,w=None):
+    def samplewise_loss(self, x, y, target_x = None, target_y = None, w=None):
         ## Get training loss for each sample
         sample_loss = []
+        if target_x is None:
+            target_x = x
+            target_y = y
         for s in range(x.shape[0]):
             s_weights = w
             for k in range(self.update_step):
@@ -130,10 +136,10 @@ class Meta(nn.Module):
                 del logits
                 del grad
                 torch.cuda.empty_cache()
-                logits_q = self.net(x, s_weights, bn_training=True)
+                logits_q = self.net(target_x, s_weights, bn_training=True)
                 if self.an > 0:
                     logits_q = logits_q[:,:-self.an]
-            loss_q = self.loss_fn(logits_q, y)
+            loss_q = self.loss_fn(logits_q, target_y)
             #loss_q = F.cross_entropy(logits_q, y)
             sample_loss.append(loss_q.item())
             del logits_q
@@ -189,7 +195,7 @@ class Meta(nn.Module):
                 #correct = torch.eq(pred_q, y_qry[i]).sum().item()  # convert to numpy
                 del pred_q
                 corrects[0] = corrects[0] + correct
-            al_inputs, al_labels = self.al_dataset(x_qry[i], y_qry[i],pair=self.pair)
+            al_inputs, al_labels,hooks = self.al_dataset(x_qry[i], y_qry[i],pair=self.pair)
             for k in range(self.update_step):
                 # Model loss
                 logits_a = self.net(x_spt[i], vars=s_weights, bn_training=True)
@@ -261,7 +267,7 @@ class Meta(nn.Module):
     def al_test(self, x, y, w=None):
         if w is None:
             w = self.net.parameters()
-        al_inputs, al_labels = self.al_dataset(x, y, self.net.parameters(),pair=self.pair)
+        al_inputs, al_labels, hooks = self.al_dataset(x, y, self.net.parameters(),pair=self.pair)
         if self.pair:
             logits = []
             for j in range(al_inputs.shape[0]):
