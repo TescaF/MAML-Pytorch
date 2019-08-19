@@ -6,7 +6,7 @@ from    torch.utils.data import DataLoader
 from    torch.optim import lr_scheduler
 import  random, sys, pickle
 import  argparse
-from torch.utils.tensorboard import SummaryWriter
+from tensorboardX import SummaryWriter
 from meta_sub import AL_Learner
 from meta5 import Meta
 #from al_meta import Meta
@@ -59,7 +59,7 @@ def main():
     print(args)
 
     al_config = [
-        ('linear', [64, task_config[-1][-1][-1]])
+        ('linear', [32, task_config[-1][-1][-1]])
     ]
 
     device = torch.device('cuda')
@@ -90,6 +90,7 @@ def main():
             acc, loss = maml(x_spt, y_spt, x_qry, y_qry)
             if acc is not None:
                 accs.append(acc)
+                logger.add_scalar('Accs/train', acc[0], s+1)
             for tag, value in maml.net.named_parameters():
                 tag = tag.replace('.','/')
                 logger.add_histogram(tag, value.data.cpu().numpy(), s+1)
@@ -102,9 +103,9 @@ def main():
                 print('step:', step, '\tAL acc:', np.array(accs).mean(axis=0))
                 accs = []
 
-            if step % 500 == 0:  # evaluation
+            if step > 0 and step % 500 == 0:  # evaluation
                 torch.save(maml.state_dict(), save_path + str(step) + "_al_net.pt")
-                '''db_test = DataLoader(mini_test, 1, shuffle=True, num_workers=1, pin_memory=True)
+                db_test = DataLoader(mini_test, 1, shuffle=True, num_workers=1, pin_memory=True)
                 al_accs = []
 
                 for x_spt, y_spt, x_qry, y_qry in db_test:
@@ -114,7 +115,8 @@ def main():
 
                 # [b, update_step+1]
                 al_accs = np.array(al_accs).mean(axis=0).astype(np.float16)
-                print('AL acc:', al_accs)'''
+                logger.add_scalar('Accs/test', al_accs[-1], s)
+                print('AL acc:', al_accs)
 
 
 
