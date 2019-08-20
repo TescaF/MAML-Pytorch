@@ -11,7 +11,7 @@ class Learner(nn.Module):
 
     """
 
-    def __init__(self, config, imgc, imgsz):
+    def __init__(self, config):
         """
 
         :param config: network config file, type:list of (string, list)
@@ -119,7 +119,7 @@ class Learner(nn.Module):
 
 
 
-    def forward(self, x, vars=None, bn_training=True,dropout_rate=-1, hook=None, start_idx=0, start_bn=0):
+    def forward(self, x, vars=None, bn_training=True,dropout_rate=-1, hook=None, last_layer=False):
         """
         This function can be called by finetunning, however, in finetunning, we dont wish to update
         running_mean/running_var. Thought weights/bias of bn is updated, it has been separated by fast_weights.
@@ -133,17 +133,20 @@ class Learner(nn.Module):
 
         if vars is None:
             vars = self.vars
-
-        idx = start_idx
-        bn_idx = start_bn
-        if idx > 0:
+        if last_layer:
             c = -1
+            idx = len(vars)-2
+            bn_idx = len(self.vars_bn)
         else:
             c = 0
+            idx = 0 
+            bn_idx = 0
+        p = 0
 
         for name, param in self.config[c:]:
-            if hook == idx:
+            if hook == p:
                 hook_data = x
+            p += 1
             if dropout_rate > 0:
                 x = F.dropout(x, p=dropout_rate, training=True)
             if torch.isnan(x).any():

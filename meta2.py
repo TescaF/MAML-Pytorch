@@ -44,10 +44,10 @@ class Meta(nn.Module):
         self.update_step_test = args.update_step_test
         self.train_al = args.train_al == 1
         self.alpha = args.alpha
-        self.net = Learner(config, args.imgc, args.imgsz)
+        self.net = Learner(config)
         if al:
             al_config = [('linear', [self.an, config[-1][-1][-1]])]
-            self.al_net = Learner(al_config, args.imgc, args.imgsz)
+            self.al_net = Learner(al_config)
         self.meta_optim = optim.Adam(self.net.parameters(), lr=self.meta_lr)
         self.loss_fn = loss_fn
         self.accs_fn = accs_fn

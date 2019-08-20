@@ -26,7 +26,7 @@ class Affordances:
         self.rand = RandomState(222)
         fts_loc = "/home/tesca/data/part-affordance-dataset/features/all_fts.pkl"
         self.new_aff = (new_aff == 1)
-        self.categories = [[4,'bowl'],[4,'cup'],[2,'knife'],[3,'ladle'],[4,'mug'],[2,'scissors'],[3,'spoon'],[3,'trowel'],[6,'turner']]
+        self.categories = [[4,'bowl'],[4,'cup'],[2,'knife'],[4,'ladle'],[4,'mug'],[2,'scissors'],[3,'spoon'],[3,'trowel'],[6,'turner']]
         self.train = train
         self.ignored_objects = "None"
         self.aff_range = list(range(2,7))
@@ -108,7 +108,7 @@ class Affordances:
 
     def next(self):
         outputs = np.zeros([self.batch_size, self.num_samples_per_class, self.dim_output])
-        init_inputs = np.zeros([self.batch_size, self.num_samples_per_class, self.dim_input + self.dim_params])
+        init_inputs = np.zeros([self.batch_size, self.num_samples_per_class, self.dim_input])
         obj_keys = list(sorted(self.objects.keys()))
         if self.train: #choose tasks at random
             tasks = self.rand.choice(len(self.task_pairs), self.batch_size, replace=False)
@@ -122,14 +122,15 @@ class Affordances:
                 sample = task_data[samples[j]]
                 aff = sample[0]
                 obj = [i for i in self.objects[sample[1]] if i[0] == int(aff)][0]
-                init_inputs[i,j] = np.concatenate((self.inputs[sample[1]], np.squeeze(np.array([obj[1][:2]]))))
+                init_inputs[i,j] = self.inputs[sample[1]]
+                #init_inputs[i,j] = np.concatenate((self.inputs[sample[1]], np.squeeze(np.array([obj[1][:2]]))))
                 outputs[i, j] = np.array([obj[-1][0],obj[-1][1]])
         return init_inputs, outputs
 
     def all_samples(self, aff):
         obj_keys = list(sorted(self.affordances[aff]))
         outputs = np.zeros([len(obj_keys), self.dim_output])
-        init_inputs = np.zeros([len(obj_keys), self.dim_input + self.dim_params])
+        init_inputs = np.zeros([len(obj_keys), self.dim_input])
         for j in range(len(obj_keys)):
             obj = [i for i in self.objects[obj_keys[j]] if i[0] == int(aff)][0]
             if self.grasp_params:

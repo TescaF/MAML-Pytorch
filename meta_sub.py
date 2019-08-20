@@ -9,7 +9,6 @@ from    torch import optim
 import  numpy as np
 from    learner import Learner
 from    copy import deepcopy
-from torchviz import make_dot
 
 def debug_memory():
     import collections, gc, resource, torch
@@ -96,31 +95,28 @@ class AL_Learner(nn.Module):
             al_inputs, al_labels = self.al_triples(x_qry[i], y_qry[i])
             if al_inputs is None:
                 return None, None
-            weights = list(self.net.parameters()) #self.weights
-            for _ in range(10):
-                logits_a = []
-                #weights = self.net.parameters() #self.weights
-                for j in range(al_inputs.shape[0]):
-                    la = self.net(al_inputs[j,0], vars=weights, bn_training=True)
-                    lb = self.net(al_inputs[j,1], vars=weights, bn_training=True)
-                    lc = self.net(al_inputs[j,2], vars=weights, bn_training=True)
-                    d1 = dist(lb.unsqueeze(0), la.unsqueeze(0))
-                    d2 = dist(lc.unsqueeze(0), la.unsqueeze(0))
-                    #d1 = torch.norm(lb - la)
-                    #d2 = torch.norm(lc - la)
-                    logits_a.append(d1 - d2)
-                logits_a = torch.stack(logits_a)
-                #loss = self.smooth_hinge_loss(logits_a, al_labels) 
-                loss = crit(logits_a.squeeze(1), al_labels)
-                pred = (torch.sigmoid(logits_a) > 0.5).float().squeeze(1)
-                c1 = torch.eq(al_labels, pred).sum().item()
-            #c = torch.eq(al_labels, torch.sign(logits_a)).sum().item()
-                al_corrects.append(c1/al_labels.shape[0])
-                #al_corrects[0] += (c1/al_labels.shape[0])
-                if loss > 0:
-                    grad = torch.autograd.grad(loss, weights)
-                    weights = list(map(lambda p: p[1] - self.meta_lr * p[0], zip(grad, weights)))
-            pdb.set_trace()
+            #weights = list(self.net.parameters()) #self.weights
+            logits_a = []
+            weights = self.net.parameters() #self.weights
+            for j in range(al_inputs.shape[0]):
+                la = self.net(al_inputs[j,0], vars=weights, bn_training=True)
+                lb = self.net(al_inputs[j,1], vars=weights, bn_training=True)
+                lc = self.net(al_inputs[j,2], vars=weights, bn_training=True)
+                d1 = dist(lb.unsqueeze(0), la.unsqueeze(0))
+                d2 = dist(lc.unsqueeze(0), la.unsqueeze(0))
+                #d1 = torch.norm(lb - la)
+                #d2 = torch.norm(lc - la)
+                logits_a.append(d1 - d2)
+            logits_a = torch.stack(logits_a)
+            #loss = self.smooth_hinge_loss(logits_a, al_labels) 
+            loss = crit(logits_a.squeeze(1), al_labels)
+            pred = (torch.sigmoid(logits_a) > 0.5).float().squeeze(1)
+            c1 = torch.eq(al_labels, pred).sum().item()
+            #al_corrects.append(c1/al_labels.shape[0])
+            al_corrects[0] += (c1/al_labels.shape[0])
+            #if loss > 0:
+            #    grad = torch.autograd.grad(loss, weights)
+            #    weights = list(map(lambda p: p[1] - self.meta_lr * p[0], zip(grad, weights)))
             loss_a = loss.item()
             self.meta_optim.zero_grad()
             loss.backward()
@@ -150,7 +146,6 @@ class AL_Learner(nn.Module):
                 al_corrects[1] += (c2/al_labels.shape[0])
             del loss, logits_a, loss2, logits_b
 
-        return np.array(al_corrects), loss_b
         al_accs = np.array(al_corrects) / task_num
         return al_accs, [loss_a,loss_b]
 
