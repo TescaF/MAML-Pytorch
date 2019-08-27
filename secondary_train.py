@@ -29,7 +29,7 @@ def main():
     logger = SummaryWriter()
 
     ## Task Learner Setup
-    task_config = [
+    '''task_config = [
         ('conv2d', [32, 3, 3, 3, 1, 0]),
         ('relu', [True]),
         ('bn', [32]),
@@ -48,6 +48,16 @@ def main():
         ('max_pool2d', [2, 1, 0]),
         ('flatten', []),
         ('linear', [args.n_way, 32 * 5 * 5])
+    ]'''
+
+    task_config = [
+        ('linear', [512,4096]),
+        ('relu', [True]),
+        ('bn', [512]),
+        ('linear', [512,512]),
+        ('relu', [True]),
+        ('bn', [512]),
+        ('linear', [2 + al_sz, 512]) #x, y, AL
     ]
 
     load_path = os.getcwd() + '/data/model_batchsz1_stepsz0.01_epoch2000_v0.pt'
@@ -60,7 +70,7 @@ def main():
     print(args)
 
     al_config = [
-        ('linear', [32, task_config[-1][-1][-1]])
+        ('linear', [32, task_config[-2][-1][-1]])
     ]
 
     device = torch.device('cuda')

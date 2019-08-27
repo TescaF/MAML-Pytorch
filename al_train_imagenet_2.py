@@ -74,7 +74,7 @@ def main():
 
             x_spt, y_spt, x_qry, y_qry = x_spt.to(device), y_spt.to(device), x_qry.to(device), y_qry.to(device)
 
-            acc,al_acc,losses = maml(x_spt, y_spt, x_qry, y_qry)
+            acc,al_acc,losses = maml(x_spt, y_spt, x_qry, y_qry, (s%100==0))
             accs.append(acc)
             al_accs.append(al_acc)
             logger.add_scalar('Accs/model',acc[-1],s+1)
@@ -92,6 +92,7 @@ def main():
 
             if step % 500 == 0:  # evaluation
                 db_test = DataLoader(mini_test, 1, shuffle=True, num_workers=1, pin_memory=True)
+                accs = []
 
                 for x_spt, y_spt, x_qry, y_qry in db_test:
                     x_spt, y_spt, x_qry, y_qry = x_spt.squeeze(0).to(device), y_spt.squeeze(0).to(device), \

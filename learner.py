@@ -149,8 +149,8 @@ class Learner(nn.Module):
             p += 1
             if dropout_rate > 0:
                 x = F.dropout(x, p=dropout_rate, training=True)
-            if torch.isnan(x).any():
-                pdb.set_trace()
+            #if torch.isnan(x).any():
+            #    pdb.set_trace()
             if name is 'conv2d':
                 w, b = vars[idx], vars[idx + 1]
                 # remember to keep synchrozied of forward_encoder and forward_decoder!

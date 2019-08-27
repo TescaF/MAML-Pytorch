@@ -9,7 +9,7 @@ from    torch.optim import lr_scheduler
 import  random, sys, pickle
 import  argparse
 import torch.nn.functional as F
-from reg_meta import Meta
+from basic_meta import Meta
 #from al_meta import Meta
 from affordances import Affordances
 
@@ -29,34 +29,6 @@ def main():
     logger = SummaryWriter()
     print(args)
     al_sz = 0
-    config = [
-        ('linear', [64,150]),
-        ('relu', [True]),
-        ('bn', [64]),
-        ('linear', [64,64]),
-        ('relu', [True]),
-        ('bn', [64]),
-        ('linear', [2 + al_sz, 64]) #x, y, AL
-    ]
-
-    '''config = [
-        ('linear', [512,4096]),
-        ('tanh', []),
-        ('bn', [512]),
-        ('linear', [512,512]),
-        ('tanh', []),
-        ('bn', [512]),
-        ('linear', [2 + al_sz, 512]) #x, y, AL
-    ]'''
-
-    device = torch.device('cuda')
-    maml = Meta(args, config, al_sz, F.mse_loss, None).to(device)
-
-    tmp = filter(lambda x: x.requires_grad, maml.parameters())
-    num = sum(map(lambda x: np.prod(x.shape), tmp))
-    print(maml)
-    print('Total trainable tensors:', num)
-
     db_train = Affordances(
                        batchsz=args.task_num,
                        k_shot=args.k_spt,
@@ -65,15 +37,33 @@ def main():
                        new_aff = args.new_aff,
                        exclude = args.exclude)
 
-    '''db_test = Affordances(
-                       batchsz=args.task_num,
+    db_test = Affordances(
+                       batchsz=1,
                        k_shot=args.k_spt,
                        k_qry=args.k_qry,
                        train = False,
                        new_aff = args.new_aff,
-                       exclude = args.exclude)'''
+                       exclude = args.exclude)
 
     save_path = os.getcwd() + '/data/affordances/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_naff' + str(args.new_aff) + '_ex' + str(args.exclude) + '_epoch'
+    print(db_train.dim_input)
+    config = [
+        ('linear', [32,db_train.dim_input]),
+        ('relu', [True]),
+        ('bn', [32]),
+        ('linear', [32,32]),
+        ('relu', [True]),
+        ('bn', [32]),
+        ('linear', [2, 32])
+    ]
+
+    device = torch.device('cuda')
+    maml = Meta(args, config, al_sz, F.mse_loss, None).to(device)
+
+    tmp = filter(lambda x: x.requires_grad, maml.parameters())
+    num = sum(map(lambda x: np.prod(x.shape), tmp))
+    print(maml)
+    print('Total trainable tensors:', num)
 
     accs,al_accs = [],[]
     for epoch in range(args.epoch):
@@ -85,38 +75,35 @@ def main():
         x_spt, y_spt, x_qry, y_qry = torch.from_numpy(x_spt).float().to(device), torch.from_numpy(y_spt).float().to(device), \
                                      torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device)
 
-        acc, al_acc, losses = maml(x_spt, y_spt, x_qry, y_qry,(epoch%500==0))
+        acc, loss = maml(x_spt, y_spt, x_qry, y_qry,(epoch%500==0))
         accs.append(acc)
-        al_accs.append(al_acc)
         logger.add_scalar('Accs/model',acc[-1],epoch+1)
-        logger.add_scalar('Accs/AL',al_acc,epoch+1)
-        logger.add_scalar('Loss/model',losses[0],epoch+1)
-        logger.add_scalar('Loss/AL',losses[1],epoch+1)
-        logger.add_scalar('Loss/total',losses[2],epoch+1)
+        logger.add_scalar('Loss/model',loss,epoch+1)
 
         if epoch % 30 == 0:
-            print('step:', epoch, '\ttraining acc:', np.array(accs).mean(axis=0), '\tAL acc:', np.array(al_accs).mean(axis=0))
+            print('step:', epoch, '\ttraining acc:', np.array(accs).mean(axis=0))
             accs,al_accs = [],[]
 
         if epoch % 500 == 0:  # evaluation
-            '''al_accs, accs_all_test = [], []
+            al_accs, accs_all_test = [], []
 
-            x_spt, y_spt, x_qry, y_qry = db_test.next()
-            x_spt, y_spt, x_qry, y_qry = torch.from_numpy(x_spt).to(device), torch.from_numpy(y_spt).to(device), \
-                                         torch.from_numpy(x_qry).to(device), torch.from_numpy(y_qry).to(device)
+            batch_x, batch_y = db_train.next()
+            x_spt = batch_x[:,:args.k_spt,:]
+            y_spt = batch_y[:,:args.k_spt,:]
+            x_qry = batch_x[:,args.k_spt:,:]
+            y_qry = batch_y[:,args.k_spt:,:]
+            x_spt, y_spt, x_qry, y_qry = torch.from_numpy(x_spt).float().to(device), torch.from_numpy(y_spt).float().to(device), \
+                                         torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device)
+
 
             for x_spt_one, y_spt_one, x_qry_one, y_qry_one in zip(x_spt, y_spt, x_qry, y_qry):
-                accs,_ = maml.finetunning(x_spt_one, y_spt_one, x_qry_one, y_qry_one)
-                al_accs.append(maml.al_test(x_qry_one, y_qry_one))
-                accs_all_test.append(accs)
+                acc,_ = maml.finetuning(x_spt_one, y_spt_one, x_qry_one, y_qry_one)
+                accs_all_test.append(acc)
 
             # [b, update_step+1]
-            accs = np.array(accs_all_test).mean(axis=0).astype(np.float16)
-            print('Test acc:', accs)
-            _, al_accs = np.array(al_accs).mean(axis=0).astype(np.float16)
-            print('AL acc:', al_accs)
-            logger.add_scalar('Test/model',accs[-1],epoch+1)
-            logger.add_scalar('Test/AL',al_accs[-1],epoch+1)'''
+            acc = np.array(accs_all_test).mean(axis=0).astype(np.float16)
+            print('Test acc:', acc)
+            logger.add_scalar('Test/model',acc[-1],epoch+1)
             torch.save(maml.state_dict(), save_path + str(epoch%2000) + "_al.pt")
 
 

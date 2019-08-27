@@ -67,33 +67,18 @@ def al_method_grad(mod, w, x_cand, avail_cands, args, c):
     idx = np.argmax(np.array(exp_grads))'''
     return avail_cands[np.argmax(np.array(grad_ests))] # max_min_dists[idx][0]
 
-def al_method_learned(mod, tuned_w, cand_data, avail_cand_idx, update=False):
-    if update:
-        w = tuned_w
-    else:
-        w = mod.parameters()
-    raw_comps, comps = [], []
-    diffs = []
-    for i in range(cand_data.shape[0]):
-        c = []
-        for j in range(cand_data.shape[0]):
-            if i == j:
-                continue
-            c.append(cand_data[i] - cand_data[j])
-        diffs.append(torch.stack(c))
-    diffs = torch.cat(diffs)
-    ests = mod(diffs, vars = w, bn_training=True)[:,-1]
-    split_ests = torch.split(ests, cand_data.shape[0]-1)
-    comps = [torch.sum(torch.sign(split_ests[i])).item() for i in range(cand_data.shape[0])]
-    raw_comps = [torch.sum(split_ests[i]).item() for i in range(cand_data.shape[0])]
-    #comps.append(torch.sum(torch.sign(ests)).item())
-    #raw_comps.append(torch.sum(ests).item())
-    idxs = np.argsort(np.array(comps))
-    raw_idxs = np.argsort(np.array(raw_comps))
-    return idxs
-    #for i in idxs:
-    #    if i in avail_cand_idx:
-    #        return i
+def al_method_learned(mod,an, x, w, n):
+    samples = list(itertools.combinations(list(range(x.shape[0])), r=n))
+    ## Get training loss for each sample
+    variances=[]
+    for s in samples:
+        x_s = torch.stack([x[i] for i in s])
+        logits = mod(x_s, vars=w, bn_training=True)[:,-an:].squeeze(1)
+        variances.append(torch.var(logits).item())
+        
+    pdb.set_trace()
+    queries = samples[np.argmax(np.array(variances))]
+    return queries
     
 
 def al_method_dropout(mod, tuned_w, cand_data, avail_cand_idx, args):
@@ -120,7 +105,35 @@ def al_method_dropout(mod, tuned_w, cand_data, avail_cand_idx, args):
     idx = np.argmax(variances)
     return avail_cand_idx[idx] # max_min_dists[idx][0]
 
-def al_method_k_centers(mod, tuned_w, cand_data, avail_cand_idx, target_data, dist_metric="output"):
+def al_method_learned_centers(al_mod, mod, x_cand):
+    hooks = mod(x_cand, vars = mod.parameters(), bn_training=True, hook=len(mod.config)-1)
+    al_space = al_mod(hooks, vars = al_mod.parameters(), bn_training=True)
+    al_dists = torch.cuda.FloatTensor(x_cand.shape[0], x_cand.shape[0]).fill_(0.0)
+    for i in range(x_cand.shape[0]):
+        for j in range(x_cand.shape[0]):
+            al_dists[i, j] = torch.norm(al_space[i] - al_space[j])
+
+    max_min_dists = []
+    samples = list(itertools.combinations(list(range(x_cand.shape[0])), r=3))
+
+    # For each potential labeled query set...
+    for i in range(len(samples)):
+        s = samples[i]
+        min_dists = []
+        # ...find the distance between each point and...
+        for pt in range(x_cand.shape[0]):
+            min_dist = torch.cuda.FloatTensor([np.inf])
+            # ...the nearest labeled query in the current set
+            for ps in s:
+                min_dist = torch.min(min_dist, al_dists[ps, pt])
+            min_dists.append(min_dist)
+        # Save the point that is the longest distance from a labeled query
+        max_min_dists.append(torch.max(torch.stack(min_dists)))
+    max_min_dists = torch.stack(max_min_dists)
+    best = samples[torch.argmin(max_min_dists)]
+    return best
+
+def al_method_k_centers(al_mod, mod, tuned_w, cand_data, avail_cand_idx, target_data, dist_metric="output"):
     if tuned_w is None:
         tuned_w = mod.parameters()
     x_cand = cand_data
@@ -134,12 +147,15 @@ def al_method_k_centers(mod, tuned_w, cand_data, avail_cand_idx, target_data, di
         for j in range(target_data.shape[0]):
             in_dists[i, j] = torch.norm(cand_data[i] - target_data[j])
             out_dists[i, j] = torch.norm(cand_ests[i] - tgt_ests[j])
+            al_dists[i, j] = torch.norm(al_space[i] - al_space[j])
             if dist_metric == "output":
                 dists[i, j] = out_dists[i,j]
             elif dist_metric == "input_output":
                 dists[i, j] = out_dists[i,j] * in_dists[i,j]
             elif dist_metric == "input":
                 dists[i, j] = in_dists[i,j]
+            elif dist_metric == "al":
+                dists[i, j] = al_dists[i,j]
 
     labeled_cands = np.setdiff1d(range(cand_data.shape[0]), avail_cand_idx)
     max_min_dists = []
@@ -163,7 +179,9 @@ class QuerySelector():
         self.query_order = []
 
     def all_queries(self, cands, k):
-        orderings = [np.random.permutation(cands) for _ in range(10)]
+        orderings = itertools.combinations(cands, k) 
+        #orderings = [np.random.choice(cands, k, replace=False) for _ in range(100)]
+        #orderings = [np.random.permutation(cands) for _ in range(100)]
         queries = []
         for o in orderings:
             queries.append([cands[i] for i in o])
@@ -175,7 +193,13 @@ class QuerySelector():
             return False
         return True
 
-    def query(self, args, net, w, cands, avail_cands, targets, k, method, classification):
+    def al_query(self, al_mod, net, cands):
+        if len(self.query_order) == 0:
+             self.query_order = list(al_method_learned_centers(al_mod, net, cands))
+        s = self.query_order.pop(0)
+        return s
+
+    def query(self, args, net, w, cands, avail_cands, targets, k, method, classification, al_sz):
         if method == "random":
            if len(self.query_order) == 0:
                 self.query_order = self.all_queries(avail_cands, k)
@@ -194,7 +218,8 @@ class QuerySelector():
             s = al_method_grad(net, w, cands, avail_cands, args, classification)
         if method == "learned":
            if len(self.query_order) == 0:
-                self.query_order = list(al_method_learned(net, w, cands, avail_cands))
+                self.query_order = list(al_method_learned_centers(al_mod, net, cands))
+                pdb.set_trace()
            s = self.query_order.pop(0)
            #for q in self.query_order:
            #     if q in avail_cands:
