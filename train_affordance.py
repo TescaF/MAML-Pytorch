@@ -78,7 +78,7 @@ def main():
 
 
             for x_spt_one, y_spt_one, x_qry_one, y_qry_one in zip(x_spt, y_spt, x_qry, y_qry):
-                acc,_ = maml.finetuning(x_spt_one, y_spt_one, x_qry_one, y_qry_one)
+                acc,_,_ = maml.finetuning(x_spt_one, y_spt_one, x_qry_one, y_qry_one)
                 accs_all_test.append(acc)
 
             # [b, update_step+1]
@@ -92,7 +92,7 @@ def main():
 if __name__ == '__main__':
 
     argparser = argparse.ArgumentParser()
-    argparser.add_argument('--epoch', type=int, help='epoch number', default=20000)
+    argparser.add_argument('--epoch', type=int, help='epoch number', default=20001)
     argparser.add_argument('--k_spt', type=int, help='k shot for support set', default=1)
     argparser.add_argument('--k_qry', type=int, help='k shot for query set', default=15)
     argparser.add_argument('--task_num', type=int, help='meta batch size, namely task num', default=5)

@@ -161,7 +161,7 @@ class Meta(nn.Module):
 
         del net
         accs = np.array(corrects) 
-        return accs,fast_weights
+        return accs,fast_weights, logits_q
 
 def main():
     pass
