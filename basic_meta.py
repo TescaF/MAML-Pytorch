@@ -36,7 +36,7 @@ class Meta(nn.Module):
     """
     Meta Learner
     """
-    def __init__(self, args, config, al_sz, loss_fn=F.cross_entropy, accs_fn=torch.eq):
+    def __init__(self, args, config, loss_fn=F.cross_entropy, accs_fn=torch.eq):
         """
 
         :param args:
@@ -47,36 +47,13 @@ class Meta(nn.Module):
         self.meta_lr = args.meta_lr
         self.k_spt = args.k_spt
         self.k_qry = args.k_qry
-        self.k_model = args.k_model
         self.task_num = args.task_num
         self.update_step = args.update_step
         self.update_step_test = args.update_step_test
-        self.alpha = args.alpha
         self.net = Learner(config)
-        self.an = al_sz
         self.meta_optim = optim.Adam(self.net.parameters(), lr=self.meta_lr)
         self.loss_fn = loss_fn
         self.accs_fn = accs_fn
-
-    def smooth_hinge_loss(self, y, l):
-        loss = torch.cuda.FloatTensor([0.0])
-        for i in range(y.shape[0]):
-            ty = y[i] * l[i]
-            if ty <= 0:
-                loss += (0.5 - ty)
-            elif 0 < ty <= 1:
-                loss += (0.5 * ((1-ty)**2.0))
-        return loss / y.shape[0] 
-
-    def direct_train(self, x, y):
-        logits = self.net(x, vars=self.net.parameters(), bn_training=True)
-        loss = self.loss_fn(logits, y)
-        self.meta_optim.zero_grad()
-        loss.backward()
-        self.meta_optim.step()
-        loss_it = loss.item()
-        del loss
-        return [loss_it], loss_it
 
     def forward(self, x_spt, y_spt, x_qry, y_qry,print_flag=False):
         task_num = x_spt.size(0)
@@ -89,8 +66,6 @@ class Meta(nn.Module):
 
             ## Get loss before first update
             logits_q = self.net(x_qry[i], None, bn_training=True)
-            if self.an > 0:
-                logits_q = logits_q[:,:-self.an]
             with torch.no_grad():
                 if self.accs_fn is None:
                     correct = self.loss_fn(logits_q, y_qry[i]).item()
@@ -103,8 +78,6 @@ class Meta(nn.Module):
             ## Update model w.r.t. task loss
             for k in range(self.update_step):
                 logits_a = self.net(x_spt[i], vars=s_weights, bn_training=True)
-                if self.an > 0:
-                    logits_a = logits_a[:,:-self.an]
                 loss = self.loss_fn(logits_a, y_spt[i])
                 grad_a = list(torch.autograd.grad(loss, s_weights,allow_unused=True))
                 for g in range(len(grad_a)):
@@ -115,8 +88,6 @@ class Meta(nn.Module):
 
                 # Get accuracy after update
                 logits_q = self.net(x_qry[i], s_weights, bn_training=True)
-                if self.an > 0:
-                    logits_q = logits_q[:,:-self.an]
                 with torch.no_grad():
                     if self.accs_fn is None:
                         correct = self.loss_fn(logits_q, y_qry[i]).item()
@@ -159,8 +130,6 @@ class Meta(nn.Module):
 
         with torch.no_grad():
             logits_q = net(x_qry, net.parameters(), bn_training=True)
-            if self.an > 0:
-                logits_q = logits_q[:,:-self.an]
             if self.accs_fn is None:
                 correct = self.loss_fn(logits_q, y_qry).item()
             else:
@@ -171,8 +140,6 @@ class Meta(nn.Module):
         ## Update model w.r.t. task loss
         for k in range(self.update_step_test):
             logits_a = self.net(x_spt, vars=fast_weights, bn_training=True)
-            if self.an > 0:
-                logits_a = logits_a[:,:-self.an]
             loss = self.loss_fn(logits_a, y_spt)
             grad_a = list(torch.autograd.grad(loss, fast_weights,allow_unused=True))
             for g in range(len(grad_a)):
@@ -184,8 +151,6 @@ class Meta(nn.Module):
             # Get accuracy after update
             with torch.no_grad():
                 logits_q = self.net(x_qry, fast_weights, bn_training=True)
-                if self.an > 0:
-                    logits_q = logits_q[:,:-self.an]
                 if self.accs_fn is None:
                     correct = self.loss_fn(logits_q, y_qry).item()
                 else:
