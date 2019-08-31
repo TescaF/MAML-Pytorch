@@ -8,7 +8,7 @@ import  argparse
 import torch.nn.functional as F
 from basic_meta import Meta
 from affordances import Affordances
-
+from sklearn import preprocessing
 def main():
 
     torch.manual_seed(222)
@@ -18,15 +18,17 @@ def main():
     logger = SummaryWriter()
     print(args)
 
-    dim_output = 6
+    dim_output = 3
 
     db_train = Affordances(
+                       train=False,
                        batchsz=args.task_num,
                        k_shot=args.k_spt,
                        k_qry=args.k_qry,
                        dim_out=dim_output)
 
     load_path = os.getcwd() + '/data/tfs/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_epoch0_al.pt'
+    print(load_path)
     print(str(db_train.dim_input) + "-D input")
     config = [
         ('linear', [512,db_train.dim_input]),
@@ -46,20 +48,32 @@ def main():
     print(maml)
     print('Total trainable tensors:', num)
 
-    train = ["trowel_02_00000030", "scoop_01_00000129", "spoon_03_00000267"]
-    test = ["scoop_02_00000030", "spoon_01_00000129", "scoop_02_00000267"]
+    ## Configure training samples
+    train = ["scissors_01_00000027", "shears_02_00000003", "scissors_08_00000003"]
     x_spt = db_train.input_only(train)
-    y_spt = 3 * np.array([[-0.32,0.03,0.4,0,0,0], [0.08,-0.16,0.4,0,0,0], [-0.25,0.33,0.4,0,0,0]])
-    #y_spt = 3 * np.array([[0.32,0.52,0.7,0.52,0.37,0.11], [0.54,0.41,0.93,0.18,0.59,0.23], [0.38,0.67,0.65,0.47,0.47,0.06]])
-    #y_spt = np.array([[0.32,0.52,0.7,-0.52,-0.37,0.11], [0.54,0.41,0.93,0.18,-0.59,0.23], [0.38,0.67,0.65,-0.47,0.47,0.06]])
-    x_qry = db_train.input_only(train)
-    y_qry = np.zeros((3,6))
+    y_spt = np.array([[0.01,-0.011,0.01,0.3,-0.6,-0.01], [-0.012,-0.015,0.02,-0.45,-0.6,-0.01], [0.0,-0.012,0.0,0,-1,0]])
+    sc = preprocessing.MinMaxScaler()
+    y_spt = sc.fit_transform(y_spt[:,:3])
+
+    ## Configure test samples
+    test = ["scissors_01_00000027","scissors_01_00000060","scissors_01_00000003", "shears_01_00000009","shears_01_00000033","shears_01_00000090","scissors_02_00000009","scissors_02_00000060","scissors_02_00000030", "shears_01_00000099","shears_01_00000018","shears_01_00000021","scissors_01_00000081","scissors_01_00000096","scissors_01_00000033"]
+    qry_keys, x_qry = db_train.next_input(0)
+    x_qry = x_qry[args.k_spt:]
+    y_qry = np.zeros((x_qry.shape[0],dim_output))
+
+    ## Run through network
     x_spt, y_spt = torch.from_numpy(x_spt).float().to(device), torch.from_numpy(y_spt).float().to(device)
     x_qry, y_qry = torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device)
+    acc,_,vals = maml.finetuning(x_spt, y_spt, x_qry, y_qry)
+    print(vals)
+    vals = sc.inverse_transform(vals.detach().cpu())
+    print(vals)
 
-    acc,_,vals = maml.finetuning(x_spt, y_spt, x_qry, y_spt)
-
-    print('Vals:', vals)
+    for i in range(vals.shape[0]):
+        val_str = ""
+        for v in vals[i]:
+            val_str += str(v) + ","
+        print("['" + qry_keys[i] + "', [" + val_str[:-1] + "]], ")
     print('Accs:', acc)
 
 

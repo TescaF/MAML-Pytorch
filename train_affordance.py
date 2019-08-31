@@ -18,9 +18,10 @@ def main():
     logger = SummaryWriter()
     print(args)
 
-    dim_output = 6
+    dim_output = 3
 
     db_train = Affordances(
+                       train=True,
                        batchsz=args.task_num,
                        k_shot=args.k_spt,
                        k_qry=args.k_qry,
