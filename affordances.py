@@ -53,12 +53,12 @@ class Affordances:
             vals = [aff_data[k][-1] for k in valid_keys]
             #vals = [aff_data[k][-1]*self.dirs for k in valid_keys]
             val_m = np.matrix(vals) 
-            all_vals.append(val_m)
-            vals_max.append(np.max(val_m,axis=0))
-            vals_min.append(np.min(val_m,axis=0))
+            if val_m.shape[1] > 0:
+                all_vals.append(val_m)
+            #vals_max.append(np.max(val_m,axis=0))
+            #vals_min.append(np.min(val_m,axis=0))
             self.affs.append([valid_keys, aff_data])
             data_count += len(valid_keys)
-            pdb.set_trace()
 
         ## Load VGG features for all images
         with open(fts_loc, 'rb') as handle:
@@ -73,24 +73,24 @@ class Affordances:
         self.num_samples_per_class = k_shot + k_qry 
         self.batch_size = batchsz
         self.dim_output = dim_out
-        self.dim_latent = 4
+        self.dim_latent = 2
         self.dim_input = len(list(self.inputs.values())[0])
 
-        all_max = np.max(np.array(vals_max),axis=0)
-        all_min = np.min(np.array(vals_min),axis=0)
+        #all_max = np.max(np.array(vals_max),axis=0)
+        #all_min = np.min(np.array(vals_min),axis=0)
         max_mul = np.ones((self.dim_latent, self.dim_output))
-        max_val = np.max([abs(all_max), abs(all_min)],axis=0)
-        upper = np.matmul(max_val, max_mul) + 0.68
-        lower = np.matmul(max_val, np.negative(max_mul)) - 0.68
-        self.sc = preprocessing.MinMaxScaler(feature_range=(-1,1))
-        self.sc.fit(np.concatenate([upper,lower]))
+        #max_val = np.max([abs(all_max), abs(all_min)],axis=0)
+        #upper = np.matmul(max_val, max_mul) + 0.68
+        #lower = np.matmul(max_val, np.negative(max_mul)) - 0.68
+        #self.sc = preprocessing.MinMaxScaler(feature_range=(-1,1))
+        #self.sc.fit(np.concatenate([upper,lower]))
         self.sc1 = preprocessing.MinMaxScaler(feature_range=(-1,1))
         vals_m = np.concatenate(all_vals)
         all_vals_max = np.matmul(vals_m,max_mul)
         all_vals_min = np.matmul(vals_m,np.negative(max_mul))
         self.sc1.fit(np.concatenate([all_vals_max,all_vals_min]))
-        self.sc2 = preprocessing.StandardScaler()
-        self.sc2.fit(np.concatenate([all_vals_max,all_vals_min]))
+        #self.sc2 = preprocessing.StandardScaler()
+        #self.sc2.fit(np.concatenate([all_vals_max,all_vals_min]))
 
 
     def input_only(self, img_names):
@@ -127,7 +127,7 @@ class Affordances:
                 key = valid_keys[samples[j]]
                 init_inputs[t,j] = self.input_scale.transform(self.inputs[key].reshape(1,-1))
                 #data = np.array([(aff_data[key][-1]-self.scale)/self.scale])*self.dirs
-                data = np.array([aff_data[key][-1]]) * self.dirs
+                data = np.array([aff_data[key][-1]]) #* self.dirs
                 tf_data = np.matmul(data,s) + i
                 #tf_data = np.matmul(data,s)# + i
                 #if np.min(np.sum(data,axis=0)) < m0:

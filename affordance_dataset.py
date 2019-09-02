@@ -393,8 +393,9 @@ class ImageProc:
         img_in = Image.open(img_loc)
         return self.features_from_img(img_in)
 
-    def features_from_img(self, img_in):
+    def features_from_img(self, img):
         try:
+            img_in = Image.fromarray(np.uint8(img)*255)
             normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             to_tensor = transforms.ToTensor()
             scaler = transforms.Resize((224, 224))
