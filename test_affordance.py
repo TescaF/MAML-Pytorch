@@ -51,8 +51,8 @@ def main():
     ## Configure training samples
     train = ["scissors_01_00000027", "shears_02_00000003", "scissors_08_00000003"]
     x_spt = db_train.input_only(train)
-    y_spt = np.array([[0.01,-0.011,0.01,0.3,-0.6,-0.01], [-0.012,-0.015,0.02,-0.45,-0.6,-0.01], [0.0,-0.012,0.0,0,-1,0]])
-    sc = preprocessing.MinMaxScaler()
+    y_spt = np.array([[0.01,-0.011,0.01,0.3,-0.6,-0.01], [-0.012,-0.015,0.02,-0.45,-0.6,-0.01], [0.001,-0.012,0.001,0,-1,0]])
+    sc = preprocessing.MinMaxScaler(feature_range=(-1,1))
     y_spt = sc.fit_transform(y_spt[:,:3])
 
     ## Configure test samples
@@ -60,7 +60,6 @@ def main():
     qry_keys, x_qry = db_train.next_input(0)
     x_qry = x_qry[args.k_spt:]
     y_qry = np.zeros((x_qry.shape[0],dim_output))
-
     ## Run through network
     x_spt, y_spt = torch.from_numpy(x_spt).float().to(device), torch.from_numpy(y_spt).float().to(device)
     x_qry, y_qry = torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device)

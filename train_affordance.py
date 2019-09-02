@@ -14,7 +14,7 @@ def main():
     torch.manual_seed(222)
     torch.cuda.manual_seed_all(222)
     np.random.seed(222)
-    np.set_printoptions(precision=3)
+    np.set_printoptions(precision=5)
     logger = SummaryWriter()
     print(args)
 

@@ -11,7 +11,6 @@ import cv2 as cv
 import pickle 
 from matplotlib import pyplot as plt
 from itertools import product
-import quaternion
 from PIL import Image
 import torch
 import torch.nn as nn
@@ -26,6 +25,82 @@ class ImageProc:
         self.base_dir = "/home/tesca/data/part-affordance-dataset/"
         self.temp_dir = "templates/"
 
+    def get_centered_img(self, img, data):
+        # Get centerpoint
+        grasp_pts = [(i,j) for i in range(data.shape[0]) for j in range(data.shape[1]) if data[i,j] == 1]
+        if len(grasp_pts) == 0:
+            return None,None
+        clusters = sklearn.cluster.DBSCAN(eps=3, min_samples=20).fit_predict(grasp_pts)
+        disp_pts = [grasp_pts[i] for i in range(len(grasp_pts)) if clusters[i] > -1]
+        if len(disp_pts) == 0:
+            return None,None
+        cy, cx = [int(x) for x in np.median(disp_pts,axis=0)]
+        #plt.imshow(cv.cvtColor(img, cv.COLOR_BGR2RGB))
+        #plt.scatter([cx],[cy])
+        #plt.show()
+        value = min([cy, cx, img.shape[0] - cy, img.shape[1] - cx])
+        img_tf = cv.linearPolar(img, (cx,cy), value, cv.WARP_FILL_OUTLIERS)
+        feats = self.features_from_img(img_tf)
+
+        # Get affordance point
+        label_tf = cv.linearPolar(data, (cx,cy), value, cv.WARP_FILL_OUTLIERS)
+        aff_data = []
+        for a in range(2,7):
+            aff_pts = [(i,j) for i in range(label_tf.shape[0]) for j in range(label_tf.shape[1]) if label_tf[i,j] == a]
+            if len(aff_pts) == 0:
+                aff_data.append(None)
+            else:
+                clusters = sklearn.cluster.DBSCAN(eps=3, min_samples=5).fit_predict(aff_pts)
+                disp_pts = [aff_pts[i] for i in range(len(aff_pts)) if clusters[i] > -1]
+                if len(disp_pts) == 0:
+                    aff_data.append(None)
+                else:
+                    dists = [p[1] for p in disp_pts]
+                    #dists = [math.sqrt((cy - p[1])**2.0 + (cx - p[0])**2.0) for p in disp_pts]
+                    i = np.argmax(np.array(dists)) #dists.index(max(dists))
+                    aff_data.append(disp_pts[i])
+                    #plt.imshow(cv.cvtColor(img_tf, cv.COLOR_BGR2RGB))
+                    #plt.scatter([aff_data[-1][1]],[aff_data[-1][0]])
+                    #plt.show()
+        return aff_data, feats
+        
+    def convert_to_polar(self):
+        depths, labels, images = [], [], []
+        dirs = os.listdir(self.base_dir + "tools/")
+        pos_dict = []
+        features = dict()
+        for i in range(2,7):
+            pos_dict.append(dict())
+        c2 = 0
+        for d in dirs:
+            print("Directory " + str(c2) + " of " + str(len(dirs)))
+            if os.path.isdir(self.base_dir + "tools/" + d):
+                files = os.listdir(self.base_dir + "tools/" + d)
+                objs = [i for i in files if i.endswith('label.mat') and int(i.split(d+"_")[1].split("_label")[0])%3==0]
+                c1 = 0
+                for o in objs:
+                    sys.stdout.write("\rFile %i of %i" %(c1, len(objs)))
+                    sys.stdout.flush()
+                    label = scipy.io.loadmat(self.base_dir + "tools/" + d + "/" + o)
+                    label = label['gt_label']
+                    labels.append([o.split("_label")[0],label])
+                    depths.append(cv.imread(self.base_dir + "tools/" + d + '/' + o.split("label")[0] + 'depth.png',-1))
+                    images.append(cv.imread(self.base_dir + "tools/" + d + '/' + o.split("label")[0] + 'rgb.jpg',-1))
+                    aff_data, feats = self.get_centered_img(images[-1], labels[-1][1])
+                    if aff_data is not None:
+                        features[labels[-1][0]] = feats
+                        for a in range(2,7):
+                            pos = [a, aff_data[a-2]]
+                            pos_dict[a-2][labels[-1][0]] = pos
+                    c1+=1
+            c2+=1
+        print("Saving poses...")
+        for a in range(2,7):
+            with open(self.base_dir + "features/polar_aff_" + str(a) + "_positions.pkl", 'wb') as handle:
+                pickle.dump(pos_dict[a-2], handle, protocol=pickle.HIGHEST_PROTOCOL)
+        with open(self.base_dir + "features/polar_fts.pkl", 'wb') as handle:
+            pickle.dump(features, handle, protocol=pickle.HIGHEST_PROTOCOL)
+                            
     def process_all_images(self):
         depths, labels = [], []
         dirs = os.listdir(self.base_dir + "tools/")
@@ -313,10 +388,13 @@ class ImageProc:
         return dataset
 
     def features(self, img_name,img_num): #prefix, img_num):
+        img_loc = self.base_dir + "tools/" + img_name
+        #img_loc = self.base_dir + "cropped/" + img_name + "_rgb-" + str(img_num) + ".jpg"
+        img_in = Image.open(img_loc)
+        return self.features_from_img(img_in)
+
+    def features_from_img(self, img_in):
         try:
-            img_loc = self.base_dir + "tools/" + img_name
-            #img_loc = self.base_dir + "cropped/" + img_name + "_rgb-" + str(img_num) + ".jpg"
-            img_in = Image.open(img_loc)
             normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             to_tensor = transforms.ToTensor()
             scaler = transforms.Resize((224, 224))
@@ -357,6 +435,7 @@ if __name__ == '__main__':
     #proc.show_transforms("mug_01-2",4)
     #proc.show_transforms("mug_01",3)
     #proc.save_transforms(transform=False)
-    proc.process_all_images()
+    #proc.process_all_images()
+    proc.convert_to_polar()
     #proc.reduce_features()
     #proc.proc_features()
