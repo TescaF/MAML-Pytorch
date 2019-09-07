@@ -55,6 +55,57 @@ class Meta(nn.Module):
         self.loss_fn = loss_fn
         self.accs_fn = accs_fn
 
+    def polar_loss(self, data, target, debug=False):
+        pi = torch.cuda.FloatTensor([2*math.pi])
+        sc = torch.cuda.FloatTensor([1])
+        a1 = pi * data[:,0]
+        a2 = pi * target[:,0]
+        r1 = data[:,1] 
+        r2 = target[:,1]
+        #dists = (sc - torch.cos(a2 - a1))**2
+        dists = (r1**2) + (r2**2) - (2 * r1 * r2 * torch.cos(a2 - a1))
+        if debug:
+            pdb.set_trace()
+        return torch.mean(dists)
+
+    def tan_mse_loss(self, data, target):
+        pi = torch.cuda.FloatTensor([math.pi])
+        a = torch.tanh(data[:,0])
+        b = torch.sin(pi * target[:,0])
+        c = torch.cos(pi * target[:,0])
+        l1 = (torch.tanh(data[:,0]) - torch.sin(pi * target[:,0]))**2
+        l2 = (torch.tanh(data[:,1]) - torch.cos(pi * target[:,0]))**2
+        l3 = (data[:,2] - target[:,1])**2
+        return torch.sum(l1 + l2 + l3)/data.shape[0]
+
+    def atan_mse_loss(self, data, target):
+        pi = torch.cuda.FloatTensor([2.0* math.pi])
+        data_ang1 = torch.atan2(data[:,0],data[:,1]) / pi
+        data_ang2 = (torch.atan2(data[:,0],data[:,1]) - pi) / pi
+        conv_data1 = torch.stack([data_ang1, data[:,1:]])
+        conv_data2 = torch.stack([data_ang2, data[:,1:]])
+        loss = torch.min([(conv_data1 - target)**2, (conv_data2 - target)**2])
+        pdb.set_trace()
+        return torch.mse_loss(conv_data, target)
+
+    def shift_loss(self, data, target):
+        sc = torch.cuda.FloatTensor([1])
+        z0 = (data[:,2] - target[:,2])**2
+        x0 = (data[:,1] - target[:,1])**2
+        y0 = (data[:,0] - target[:,0])**2
+        y1 = ((data[:,0] - sc) - target[:,0])**2
+        y2 = ((data[:,0] + sc) - target[:,0])**2
+        loss = z0 + x0 + torch.min(torch.stack([y0,y1,y2]),axis=0).values
+        return torch.mean(loss)
+
+    def mod_mse_loss(self, data, target):
+        sc = torch.cuda.FloatTensor([1])
+        x_diff = (data[:,1] - target[:,1])**2.0
+        a = torch.remainder(data[:,0]+sc,2)
+        b = target[:,0]+sc
+        y_diff = (torch.remainder(a-b+sc,2)-sc)**2.0
+        return torch.mean(x_diff + y_diff)
+
     def forward(self, x_spt, y_spt, x_qry, y_qry,print_flag=False):
         task_num = x_spt.size(0)
         losses_q, losses_al = 0, 0
@@ -79,6 +130,7 @@ class Meta(nn.Module):
             for k in range(self.update_step):
                 logits_a = self.net(x_spt[i], vars=s_weights, bn_training=True)
                 loss = self.loss_fn(logits_a, y_spt[i])
+                #corrects[k] = corrects[k] + loss.item()
                 grad_a = list(torch.autograd.grad(loss, s_weights,allow_unused=True))
                 for g in range(len(grad_a)):
                     if grad_a[g] is None:

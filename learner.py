@@ -186,7 +186,8 @@ class Learner(nn.Module):
             elif name is 'leakyrelu':
                 x = F.leaky_relu(x, negative_slope=param[0], inplace=param[1])
             elif name is 'tanh':
-                x = F.tanh(x)
+                x = torch.tanh(x)
+                #x = F.tanh(x)
             elif name is 'sigmoid':
                 x = torch.sigmoid(x)
             elif name is 'upsample':

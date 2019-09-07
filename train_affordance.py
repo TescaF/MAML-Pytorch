@@ -9,6 +9,14 @@ import torch.nn.functional as F
 from basic_meta import Meta
 from affordances import Affordances
 
+def mod_mse_loss(data, target):
+    sc = torch.cuda.FloatTensor([1])
+    a = data[:,1] - target[:,1]
+    y_diff = torch.remainder((data[:,1] - target[:,1]) + sc, 2) - sc
+    pdb.set_trace()
+
+    return F.mse_loss(data, target)
+
 def main():
 
     torch.manual_seed(222)
@@ -19,28 +27,43 @@ def main():
     print(args)
 
     dim_output = 3
+    sample_size = 5 # number of images per object
 
     db_train = Affordances(
                        train=True,
                        batchsz=args.task_num,
+                       exclude=args.exclude,
+                       samples=sample_size,
                        k_shot=args.k_spt,
                        k_qry=args.k_qry,
                        dim_out=dim_output)
 
-    save_path = os.getcwd() + '/data/tfs/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_epoch'
+    db_test = Affordances(
+                       train=False,
+                       batchsz=args.task_num,
+                       exclude=args.exclude,
+                       samples=sample_size,
+                       k_shot=args.k_spt,
+                       k_qry=args.k_qry,
+                       dim_out=dim_output)
+
+    save_path = os.getcwd() + '/data/tfs/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_exclude' + str(args.exclude) + '_epoch'
     print(str(db_train.dim_input) + "-D input")
     config = [
-        ('linear', [512,db_train.dim_input]),
+        ('linear', [1024,db_train.dim_input]),
+        ('relu', [True]),
+        ('bn', [1024]),
+        ('linear', [512,1024]),
         ('relu', [True]),
         ('bn', [512]),
-        ('linear', [128,512]),
-        ('relu', [True]),
-        ('bn', [128]),
-        ('linear', [dim_output, 128])
+        ('linear', [dim_output, 512]),
+        ('sigmoid', [None])
     ]
 
     device = torch.device('cuda')
-    maml = Meta(args, config, F.mse_loss, None).to(device)
+    maml = Meta(args, config, None, None).to(device)
+    maml.loss_fn = maml.shift_loss
+    #maml = Meta(args, config, "mod_mse_loss", None).to(device)
 
     tmp = filter(lambda x: x.requires_grad, maml.parameters())
     num = sum(map(lambda x: np.prod(x.shape), tmp))
@@ -48,12 +71,13 @@ def main():
     print('Total trainable tensors:', num)
 
     accs,al_accs = [],[]
+    k_spt = args.k_spt * sample_size
     for epoch in range(args.epoch):
         batch_x, batch_y = db_train.next()
-        x_spt = batch_x[:,:args.k_spt,:]
-        y_spt = batch_y[:,:args.k_spt,:]
-        x_qry = batch_x[:,args.k_spt:,:]
-        y_qry = batch_y[:,args.k_spt:,:]
+        x_spt = batch_x[:,:k_spt,:]
+        y_spt = batch_y[:,:k_spt,:]
+        x_qry = batch_x[:,k_spt:,:]
+        y_qry = batch_y[:,k_spt:,:]
         x_spt, y_spt, x_qry, y_qry = torch.from_numpy(x_spt).float().to(device), torch.from_numpy(y_spt).float().to(device), \
                                      torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device)
 
@@ -69,11 +93,11 @@ def main():
         if epoch % 500 == 0:  # evaluation
             al_accs, accs_all_test = [], []
 
-            batch_x, batch_y = db_train.next()
-            x_spt = batch_x[:,:args.k_spt,:]
-            y_spt = batch_y[:,:args.k_spt,:]
-            x_qry = batch_x[:,args.k_spt:,:]
-            y_qry = batch_y[:,args.k_spt:,:]
+            batch_x, batch_y = db_test.next()
+            x_spt = batch_x[:,:k_spt,:]
+            y_spt = batch_y[:,:k_spt,:]
+            x_qry = batch_x[:,k_spt:,:]
+            y_qry = batch_y[:,k_spt:,:]
             x_spt, y_spt, x_qry, y_qry = torch.from_numpy(x_spt).float().to(device), torch.from_numpy(y_spt).float().to(device), \
                                          torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device)
 
@@ -93,6 +117,7 @@ def main():
 if __name__ == '__main__':
 
     argparser = argparse.ArgumentParser()
+    argparser.add_argument('--exclude', type=int, help='epoch number', default=0)
     argparser.add_argument('--epoch', type=int, help='epoch number', default=20001)
     argparser.add_argument('--k_spt', type=int, help='k shot for support set', default=1)
     argparser.add_argument('--k_qry', type=int, help='k shot for query set', default=15)

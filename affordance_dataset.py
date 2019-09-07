@@ -414,20 +414,23 @@ class ImageProc:
         return embedding.numpy()
 
     def reduce_features(self):
-        var = 0.9
-        with open(self.base_dir + "features/all_fts.pkl", 'rb') as handle:
+        var = 0.95
+        with open(self.base_dir + "features/polar/polar_fts.pkl", 'rb') as handle:
             fts = pickle.load(handle)
         keys = list(fts.keys())
         scaler = sklearn.preprocessing.StandardScaler()
         vals = list(fts.values())
+        print("Fitting data...")
         scaler.fit(vals)
         sc_data = scaler.transform(vals)
         pca = sklearn.decomposition.PCA(var)
         pca_fit = pca.fit(sc_data)
+        print("Transforming data...")
         for k in keys:
             a = scaler.transform(fts[k].reshape(1,-1))
             fts[k] = pca_fit.transform(a).squeeze(0)
-        with open(self.base_dir + "features/reduced_fts_" + str(var) + ".pkl", 'wb') as handle:
+        print("Writing data...")
+        with open(self.base_dir + "features/polar/reduced_fts_" + str(var) + ".pkl", 'wb') as handle:
             pickle.dump(fts, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 if __name__ == '__main__':
@@ -437,6 +440,6 @@ if __name__ == '__main__':
     #proc.show_transforms("mug_01",3)
     #proc.save_transforms(transform=False)
     #proc.process_all_images()
-    proc.convert_to_polar()
-    #proc.reduce_features()
+    #proc.convert_to_polar()
+    proc.reduce_features()
     #proc.proc_features()
