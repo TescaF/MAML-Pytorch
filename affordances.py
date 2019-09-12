@@ -37,10 +37,11 @@ class Affordances:
             self.inputs = pickle.load(handle)       #dict(img) = [[4096x1], ... ]
         categories = list(sorted(set([k.split("_")[0] for k in self.inputs.keys()])))
         print("Categories: " + str(categories))
-        if train:
-            print("Excluding category '" + str(categories[exclude]) + "'")
-        else:
-            print("Testing on category '" + str(categories[exclude]) + "'")
+        if exclude >= 0:
+            if train:
+                print("Excluding category '" + str(categories[exclude]) + "'")
+            else:
+                print("Testing on category '" + str(categories[exclude]) + "'")
 
         #fts_loc = "/home/tesca/data/part-affordance-dataset/features/reduced_fts_0.95.pkl"
         training_keys = []
@@ -51,11 +52,15 @@ class Affordances:
             with open(aff_loc, 'rb') as handle:
                 aff_data = pickle.load(handle)      #dict(category) = [img1, img2, ...]
             keys = list(sorted(aff_data.keys()))
-            train_valid_keys = [k for k in keys if (aff_data[k][-1] is not None) and (not k.startswith(categories[exclude]))]
+            if exclude >= 0:
+                train_valid_keys = [k for k in keys if (aff_data[k][-1] is not None) and (not k.startswith(categories[exclude]))]
+                test_valid_keys = [k for k in keys if (aff_data[k][-1] is not None) and (k.startswith(categories[exclude]))]
+            else:
+                test_valid_keys = train_valid_keys = [k for k in keys if aff_data[k][-1] is not None]
+            training_keys += train_valid_keys
+                
             #train_valid_keys = [k for k in keys if (not None in aff_data[k][-1]) and (k.endswith("01")) and (not k.split("_00")[0].endswith("01"))]
             #train_valid_keys = [k for k in keys if (not None in aff_data[k][-1]) and (not k.split("_00")[0].endswith("01"))]
-            training_keys += train_valid_keys
-            test_valid_keys = [k for k in keys if (aff_data[k][-1] is not None) and (k.startswith(categories[exclude]))]
             #test_valid_keys = [k for k in keys if (aff_data[k][-1] is not None) and (k.split("_00")[0].endswith("01"))]
             #test_valid_keys = [k for k in keys if (not None in aff_data[k][-1]) and (k.endswith("01")) and (k.split("_00")[0].endswith("01"))]
             #test_valid_keys = [k for k in keys if (not None in aff_data[k][-1]) and (k.split("_00")[0].endswith("01"))]

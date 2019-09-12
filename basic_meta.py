@@ -79,15 +79,22 @@ class Meta(nn.Module):
         return loss.item()
 
     def forward_batch(self, x_spt, y_spt):
-        logits = []
-        for i in range(x_spt.shape[0]):
-            logits.append(self.net(x_spt[i], None, bn_training=True))
-        loss = self.loss_fn(torch.stack(logits), y_spt)
+        x = x_spt.view((-1,2048))
+        logits = self.net(x, None, bn_training=True)
+        pred_q = F.softmax(logits,dim=1).argmax(dim=1)
+        correct_a = self.accs_fn(pred_q, y_spt.flatten()).sum().item()  # convert to numpy
+        loss = self.loss_fn(logits, y_spt)
         ## Optimize parameters
         self.meta_optim.zero_grad()
         loss.backward()
         self.meta_optim.step()
-        return loss.item()
+
+        logits = self.net(x, None, bn_training=True)
+        pred_q = F.softmax(logits,dim=1).argmax(dim=1)
+        correct_b = self.accs_fn(pred_q, y_spt.flatten()).flatten().sum().item()  # convert to numpy
+
+        accs = [correct_a / x.shape[0], correct_b / x.shape[0]]
+        return loss.item(), accs
 
     def forward(self, x_spt, x_qry):
         task_num = x_spt.size(0)

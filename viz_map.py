@@ -1,7 +1,9 @@
+import pickle
 import pdb
 from learner import Learner
 import sklearn.cluster
 from sklearn.linear_model import LinearRegression
+from    torch.nn import functional as F
 import scipy.io
 import numpy as np
 import sys
@@ -25,7 +27,7 @@ class ImageProc:
     def __init__(self):
         self.base_dir = "/home/tesca/data/part-affordance-dataset/"
         self.temp_dir = "templates/"
-        self.mod = self.load_fc_weights()
+        self.mod, self.ft_maps = self.load_fc_weights()
 
     def features_from_img(self, filename):
         img = filename + "_rgb.jpg"
@@ -51,7 +53,7 @@ class ImageProc:
             #plt.imshow(cv.cvtColor(img_tf, cv.COLOR_BGR2RGB))
             #plt.show()
 
-            model = models.resnet50(pretrained=True)
+            model = models.resnet50(pretrained=True) #.to(self.device)
             layer = model._modules.get("layer4")
             embedding = torch.cuda.FloatTensor(2048,7,7)
         except:
@@ -60,10 +62,9 @@ class ImageProc:
         def copy_data(m, i, o):
             embedding.copy_(o.squeeze())
         hook = layer.register_forward_hook(copy_data)
-        with torch.no_grad():
-            model(img_var)
+        output = model(img_var)
         hook.remove()
-        return embedding, img_tf
+        return embedding, output.cuda(), img_tf
 
     def get_cam(self, fts, fc_weights):
         cam = fc_weights.dot(fts)
@@ -71,46 +72,54 @@ class ImageProc:
         cam_img = cam / np.max(cam)
 
     def load_fc_weights(self):
-        load_path = os.getcwd() + '/data/tfs/model_batchsz20_stepsz0.1_exclude0_epoch0_al.pt'
+        load_path = os.getcwd() + '/data/tfs/model_batchsz20_stepsz0.1_exclude-1_epoch200_al.pt'
         print(load_path)
         config = [
-            ('linear', [512,2048]),
+            ('linear', [128,2048]),
             ('relu', [True]),
-            ('bn', [512]),
-            ('linear', [128,512]),
+            ('linear', [87,128]),
         ]
 
-        device = torch.device('cuda')
-        maml = Learner(config).to(device)
+        self.device = torch.device('cuda')
+        maml = Learner(config).to(self.device)
         model = torch.load(load_path)
         keys = list(model.keys())
         for k in keys:
             model[k.split("net.")[1]] = model.pop(k)
         maml.load_state_dict(model)
         maml.eval()
-        return maml
+        ft_maps = torch.mm(maml.parameters()[-2],maml.parameters()[0])
+        return maml, ft_maps
 
-    def get_grads(self, filename):
-        embedding, polar_img = self.features_from_img(filename)
-        pooled = torch.mean(embedding.view((-1,2048)),dim=0).unsqueeze(0)
-        res = self.mod(pooled,bn_training=False)
-        m = torch.mean(res, dim=1)
-        m.backward()
-        g = self.mod.parameters()[0].grad.transpose(0,1)
-        #im = torch.mm(fts_in.view(-1,2048), g)
-        mean = torch.mean(g,dim=1)
-        outs = torch.cuda.FloatTensor(2048,7,7)
-        for i in range(2048):
-            outs[i,:,:] = embedding[i,:,:] * mean[i]
-        outs = torch.mean(outs,dim=0)
-        outs = torch.abs(1/outs)
+    def get_grads(self, filename, class_num):
+        embedding, output, polar_img = self.features_from_img(filename)
+        pool = torch.nn.AvgPool2d(7,7,0)
+        mean = pool(embedding).squeeze()
+        res = self.mod(mean,bn_training=False)
+        c = F.softmax(res,dim=0).argmax()
+        embedding = embedding.reshape((2048,49))
+        
+        #pooled = torch.mean(embedding.reshape((2048,49)),dim=0).unsqueeze(0)
+        #m = torch.mean(res, dim=1)
+        #m.backward()
+        #g = self.mod.parameters()[0].grad.transpose(0,1)
+        #mean = torch.mean(g,dim=1)
+        #outs = torch.cuda.FloatTensor(2048,7,7)
+        dot = torch.mm(self.ft_maps, embedding)
+        outs = dot[c].reshape((7,7))
+        #for i in range(2048):
+        #    outs[i,:,:] = embedding[i,:,:] * self.ft_maps[class_num,i]
+            #outs[i,:,:] = embedding[i,:,:] * mean[i]
+        #outs = torch.mean(outs,dim=0)
+        #outs = torch.max(torch.zeros_like(outs), outs)
+        #outs = torch.abs(1/outs)
         outs = outs - torch.min(outs)
         outs = outs / torch.max(outs)
         outs = np.uint8((outs * 255).cpu().detach().numpy())
         layer = cv.resize(outs, (640,480))
         heatmap = cv.applyColorMap(layer, cv.COLORMAP_JET)
         #inal_im = heatmap  0.3 + polar_img * 0.5
-        cv.addWeighted(heatmap, 0.5, polar_img, 0.5, 0, heatmap)
+        cv.addWeighted(heatmap, 0.3, polar_img, 0.7, 0, heatmap)
         cv.imshow("im", heatmap)
         cv.waitKey()
         cv.destroyAllWindows()
@@ -118,6 +127,11 @@ class ImageProc:
 
 if __name__ == '__main__':
     proc = ImageProc()
+    fts_loc = proc.base_dir + "/features/resnet_polar_fts.pkl"
+    with open(fts_loc, 'rb') as handle:
+        inputs = pickle.load(handle)       #dict(img) = [[4096x1], ... ]
+    classes = list(sorted(set([k.split("_00")[0] for k in inputs.keys()])))
+
     objs = ["knife_01", "ladle_01", "mallet_03"]
     for img in objs:
-        proc.get_grads(proc.base_dir + "/tools/" + img + "/" + img + "_00000120")
+        proc.get_grads(proc.base_dir + "/tools/" + img + "/" + img + "_00000120", classes.index(img))

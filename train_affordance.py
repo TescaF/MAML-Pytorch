@@ -48,13 +48,9 @@ def main():
     save_path = os.getcwd() + '/data/tfs/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_exclude' + str(args.exclude) + '_epoch'
     print(str(db_train.dim_input) + "-D input")
     config = [
-        ('linear', [512,db_train.dim_input]),
+        ('linear', [128,db_train.dim_input]),
         ('relu', [True]),
-        ('bn', [512]),
-        ('linear', [128,512]),
-        ('relu', [True]),
-        ('bn', [128]),
-        ('linear', [db_train.num_classes,128]),
+        ('linear', [db_train.num_classes,128])
     ]
 
     device = torch.device('cuda')
@@ -74,14 +70,14 @@ def main():
         x_spt, y_spt = db_train.next()
         x_spt, y_spt = torch.from_numpy(x_spt).float().to(device), torch.from_numpy(y_spt).long().to(device)
 
-        loss = maml.forward_batch(x_spt, y_spt)
-        losses.append(loss)
+        loss, acc = maml.forward_batch(x_spt, y_spt)
+        losses.append(acc)
 
         if epoch % 30 == 0:
             print('step:', epoch, '\ttraining loss:', np.array(losses).mean(axis=0))
             losses = []
 
-        if epoch % 500 == 0:  # evaluation
+        if epoch % 100 == 0:  # evaluation
             '''test_losses = []
 
             batch_x = db_test.next()
