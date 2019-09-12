@@ -55,58 +55,41 @@ class Meta(nn.Module):
         self.loss_fn = loss_fn
         self.accs_fn = accs_fn
 
-    def polar_loss(self, data, target, debug=False):
-        pi = torch.cuda.FloatTensor([2*math.pi])
-        sc = torch.cuda.FloatTensor([1])
-        a1 = pi * data[:,0]
-        a2 = pi * target[:,0]
-        r1 = data[:,1] 
-        r2 = target[:,1]
-        #dists = (sc - torch.cos(a2 - a1))**2
-        dists = (r1**2) + (r2**2) - (2 * r1 * r2 * torch.cos(a2 - a1))
-        if debug:
-            pdb.set_trace()
-        return torch.mean(dists)
+    def cross_entropy_loss(self, proj, y):
+        rs_x = proj.view((-1,proj.shape[-1]))
+        rs_y = y.flatten()
+        l = F.cross_entropy(rs_x,rs_y)
+        return l
 
-    def tan_mse_loss(self, data, target):
-        pi = torch.cuda.FloatTensor([math.pi])
-        a = torch.tanh(data[:,0])
-        b = torch.sin(pi * target[:,0])
-        c = torch.cos(pi * target[:,0])
-        l1 = (torch.tanh(data[:,0]) - torch.sin(pi * target[:,0]))**2
-        l2 = (torch.tanh(data[:,1]) - torch.cos(pi * target[:,0]))**2
-        l3 = (data[:,2] - target[:,1])**2
-        return torch.sum(l1 + l2 + l3)/data.shape[0]
+    def fisher_loss(self, proj, y):
+        within_var, between_var = 0, 0
+        total_mean = torch.mean(proj.view((-1,proj.shape[-1])), axis=0)
+        for c in range(proj.shape[0]):
+            class_mean = torch.mean(proj[c], axis=0)
+            diff = class_mean - total_mean
+            between_var += torch.dot(diff,diff)
+            for s in range(proj.shape[1]):
+                diff = proj[c,s] - class_mean
+                within_var += torch.dot(diff,diff)
+        return torch.max(torch.cuda.FloatTensor([0]), within_var - (0.01 * between_var))
 
-    def atan_mse_loss(self, data, target):
-        pi = torch.cuda.FloatTensor([2.0* math.pi])
-        data_ang1 = torch.atan2(data[:,0],data[:,1]) / pi
-        data_ang2 = (torch.atan2(data[:,0],data[:,1]) - pi) / pi
-        conv_data1 = torch.stack([data_ang1, data[:,1:]])
-        conv_data2 = torch.stack([data_ang2, data[:,1:]])
-        loss = torch.min([(conv_data1 - target)**2, (conv_data2 - target)**2])
-        pdb.set_trace()
-        return torch.mse_loss(conv_data, target)
+    def test(self, x):
+        logits_q = self.net(x, None, bn_training=True)
+        loss = self.loss_fn(logits_q)
+        return loss.item()
 
-    def shift_loss(self, data, target):
-        sc = torch.cuda.FloatTensor([1])
-        z0 = (data[:,2] - target[:,2])**2
-        x0 = (data[:,1] - target[:,1])**2
-        y0 = (data[:,0] - target[:,0])**2
-        y1 = ((data[:,0] - sc) - target[:,0])**2
-        y2 = ((data[:,0] + sc) - target[:,0])**2
-        loss = z0 + x0 + torch.min(torch.stack([y0,y1,y2]),axis=0).values
-        return torch.mean(loss)
+    def forward_batch(self, x_spt, y_spt):
+        logits = []
+        for i in range(x_spt.shape[0]):
+            logits.append(self.net(x_spt[i], None, bn_training=True))
+        loss = self.loss_fn(torch.stack(logits), y_spt)
+        ## Optimize parameters
+        self.meta_optim.zero_grad()
+        loss.backward()
+        self.meta_optim.step()
+        return loss.item()
 
-    def mod_mse_loss(self, data, target):
-        sc = torch.cuda.FloatTensor([1])
-        x_diff = (data[:,1] - target[:,1])**2.0
-        a = torch.remainder(data[:,0]+sc,2)
-        b = target[:,0]+sc
-        y_diff = (torch.remainder(a-b+sc,2)-sc)**2.0
-        return torch.mean(x_diff + y_diff)
-
-    def forward(self, x_spt, y_spt, x_qry, y_qry,print_flag=False):
+    def forward(self, x_spt, x_qry):
         task_num = x_spt.size(0)
         losses_q, losses_al = 0, 0
         corrects = [0 for _ in range(self.update_step + 1)]
@@ -119,7 +102,7 @@ class Meta(nn.Module):
             logits_q = self.net(x_qry[i], None, bn_training=True)
             with torch.no_grad():
                 if self.accs_fn is None:
-                    correct = self.loss_fn(logits_q, y_qry[i]).item()
+                    correct = self.loss_fn(logits_q).item()
                 else:
                     pred_q = F.softmax(logits_q, dim=1).argmax(dim=1)
                     correct = self.accs_fn(pred_q, y_qry[i]).sum().item()  # convert to numpy
@@ -129,7 +112,7 @@ class Meta(nn.Module):
             ## Update model w.r.t. task loss
             for k in range(self.update_step):
                 logits_a = self.net(x_spt[i], vars=s_weights, bn_training=True)
-                loss = self.loss_fn(logits_a, y_spt[i])
+                loss = self.loss_fn(logits_a)
                 #corrects[k] = corrects[k] + loss.item()
                 grad_a = list(torch.autograd.grad(loss, s_weights,allow_unused=True))
                 for g in range(len(grad_a)):
@@ -142,7 +125,7 @@ class Meta(nn.Module):
                 logits_q = self.net(x_qry[i], s_weights, bn_training=True)
                 with torch.no_grad():
                     if self.accs_fn is None:
-                        correct = self.loss_fn(logits_q, y_qry[i]).item()
+                        correct = self.loss_fn(logits_q).item()
                     else:
                         pred_q = F.softmax(logits_q, dim=1).argmax(dim=1)
                         correct = self.accs_fn(pred_q, y_qry[i]).sum().item()  # convert to numpy
@@ -150,9 +133,7 @@ class Meta(nn.Module):
                     corrects[k + 1] = corrects[k + 1] + correct
 
             ## Get post-tuning losses for task and AL objectives
-            losses_q += self.loss_fn(logits_q, y_qry[i])
-            if print_flag and (self.accs_fn is None):
-                print((logits_q-y_qry[i])) #*torch.cuda.FloatTensor([640,480])) #,math.pi/2.0]))
+            losses_q += self.loss_fn(logits_q)
             del s_weights,logits_q
             torch.cuda.empty_cache()
 
@@ -172,7 +153,7 @@ class Meta(nn.Module):
             accs = np.array(corrects) / task_num
         return accs, loss
 
-    def finetuning(self, x_spt, y_spt, x_qry, y_qry):
+    def finetuning(self, x_spt, x_qry):
         querysz = x_qry.size(0)
 
         corrects = [0 for _ in range(self.update_step_test + 1)]
@@ -183,7 +164,7 @@ class Meta(nn.Module):
         with torch.no_grad():
             logits_q = net(x_qry, net.parameters(), bn_training=True)
             if self.accs_fn is None:
-                correct = self.loss_fn(logits_q, y_qry).item()
+                correct = self.loss_fn(logits_q).item()
             else:
                 pred_q = F.softmax(logits_q, dim=1).argmax(dim=1)
                 correct = self.accs_fn(pred_q, y_qry).sum().item()/querysz
@@ -192,7 +173,7 @@ class Meta(nn.Module):
         ## Update model w.r.t. task loss
         for k in range(self.update_step_test):
             logits_a = self.net(x_spt, vars=fast_weights, bn_training=True)
-            loss = self.loss_fn(logits_a, y_spt)
+            loss = self.loss_fn(logits_a)
             grad_a = list(torch.autograd.grad(loss, fast_weights,allow_unused=True))
             for g in range(len(grad_a)):
                 if grad_a[g] is None:
@@ -204,7 +185,7 @@ class Meta(nn.Module):
             with torch.no_grad():
                 logits_q = self.net(x_qry, fast_weights, bn_training=True)
                 if self.accs_fn is None:
-                    correct = self.loss_fn(logits_q, y_qry).item()
+                    correct = self.loss_fn(logits_q).item()
                 else:
                     pred_q = F.softmax(logits_q, dim=1).argmax(dim=1)
                     correct = self.accs_fn(pred_q, y_qry).sum().item()/querysz  # convert to numpy

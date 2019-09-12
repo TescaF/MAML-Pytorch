@@ -16,7 +16,7 @@ import torch
 import torch.nn as nn
 import torchvision.transforms as transforms
 from torch.autograd import Variable
-import torchvision.models.vgg as models
+import torchvision.models as models
 
 
 class ImageProc:
@@ -42,6 +42,9 @@ class ImageProc:
         img_tf = cv.linearPolar(img, (cx,cy), value, cv.WARP_FILL_OUTLIERS)
         depth_tf = cv.linearPolar(depth, (cx,cy), value, cv.WARP_FILL_OUTLIERS)
         feats = self.features_from_img(img_tf)
+        plt.imshow(cv.cvtColor(img_tf, cv.COLOR_BGR2RGB))
+        plt.show()
+        return None, None
 
         # Get affordance point
         label_tf = cv.linearPolar(data, (cx,cy), value, cv.WARP_FILL_OUTLIERS)
@@ -61,9 +64,9 @@ class ImageProc:
                     i = np.argmax(np.array(dists)) #dists.index(max(dists))
                     aff_data.append(list(disp_pts[i]) + [depth_tf[disp_pts[i][0],disp_pts[i][1]]])
                     #print(disp_pts[i])
-                    #plt.imshow(cv.cvtColor(img_tf, cv.COLOR_BGR2RGB))
-                    #plt.scatter([aff_data[-1][1]],[aff_data[-1][0]])
-                    #plt.show()
+                    plt.imshow(cv.cvtColor(img_tf, cv.COLOR_BGR2RGB))
+                    plt.scatter([aff_data[-1][1]],[aff_data[-1][0]])
+                    plt.show()
         return aff_data, feats
         
     def convert_to_polar(self):
@@ -96,10 +99,10 @@ class ImageProc:
                             pos_dict[a-2][labels[-1][0]] = pos
                             #print(pos)#
                     c1+=1
-                for a in range(2,7):
-                    with open(self.base_dir + "features/polar_aff_" + str(a) + "_positions.pkl", 'wb') as handle:
-                        pickle.dump(pos_dict[a-2], handle, protocol=pickle.HIGHEST_PROTOCOL)
-                with open(self.base_dir + "features/polar_fts.pkl", 'wb') as handle:
+                #for a in range(2,7):
+                #    with open(self.base_dir + "features/polar_aff_" + str(a) + "_positions.pkl", 'wb') as handle:
+                #        pickle.dump(pos_dict[a-2], handle, protocol=pickle.HIGHEST_PROTOCOL)
+                with open(self.base_dir + "features/resnet_polar_fts.pkl", 'wb') as handle:
                     pickle.dump(features, handle, protocol=pickle.HIGHEST_PROTOCOL)
             c2+=1
                             
@@ -110,17 +113,22 @@ class ImageProc:
             to_tensor = transforms.ToTensor()
             scaler = transforms.Resize((224, 224))
             img_var = Variable(normalize(to_tensor(scaler(img_in))).unsqueeze(0))
-            model = models.vgg16(pretrained=True)
+            model = models.resnet50(pretrained=True)
+            #model = models.vgg16(pretrained=True)
             #pdb.set_trace()
             #layer = model._modules.get("classifier")[-2]
+            pdb.set_trace()
             layer = model._modules.get("avgpool")
-            embedding = torch.zeros(25088) #self.dim_input)
+            layer2 = model._modules.get("layer4")
+            embedding = torch.zeros(2048) #self.dim_input)
+            #embedding = torch.zeros(25088) #self.dim_input)
         except:
             return None
 
         def copy_data(m, i, o):
+            pdb.set_trace()
             embedding.copy_(o.data.squeeze().flatten())
-        hook = layer.register_forward_hook(copy_data)
+        hook = layer2.register_forward_hook(copy_data)
         model(img_var)
         hook.remove()
         return embedding.numpy()

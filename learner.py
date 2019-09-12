@@ -196,6 +196,7 @@ class Learner(nn.Module):
                 x = F.max_pool2d(x, param[0], param[1], param[2])
             elif name is 'avg_pool2d':
                 x = F.avg_pool2d(x, param[0], param[1], param[2])
+                pdb.set_trace()
 
             else:
                 raise NotImplementedError

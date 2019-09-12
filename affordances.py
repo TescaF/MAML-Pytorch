@@ -17,7 +17,7 @@ from numpy.random import RandomState
 
 
 class Affordances:
-    def __init__(self, train, exclude, batchsz, samples, k_shot, k_qry, dim_out):
+    def __init__(self, train, exclude, batchsz, k_shot, k_qry, dim_out):
         """
         :param batchsz: task num
         :param k_shot: number of samples for fine-tuning
@@ -31,7 +31,7 @@ class Affordances:
         self.affs, vals_max, vals_min = [], [], []
         data_count = 0
         #fts_loc = "/home/tesca/data/part-affordance-dataset/features/polar/reduced_fts_0.95.pkl"
-        fts_loc = "/home/tesca/data/part-affordance-dataset/features/polar_fts.pkl"
+        fts_loc = "/home/tesca/data/part-affordance-dataset/features/resnet_polar_fts.pkl"
         ## Load VGG features for all images
         with open(fts_loc, 'rb') as handle:
             self.inputs = pickle.load(handle)       #dict(img) = [[4096x1], ... ]
@@ -45,6 +45,7 @@ class Affordances:
         #fts_loc = "/home/tesca/data/part-affordance-dataset/features/reduced_fts_0.95.pkl"
         training_keys = []
         all_vals = []
+        self.valid_keys = []
         for aff in range(2,7):
             aff_loc = "/home/tesca/data/part-affordance-dataset/features/polar_aff_" + str(aff) + "_positions.pkl"
             with open(aff_loc, 'rb') as handle:
@@ -62,6 +63,7 @@ class Affordances:
                 valid_keys = train_valid_keys
             else:
                 valid_keys = test_valid_keys
+            self.valid_keys += valid_keys
             vals = [aff_data[k][-1] for k in valid_keys]
             #vals = [aff_data[k][-1]*self.dirs for k in valid_keys]
             val_m = np.matrix(vals) 
@@ -72,6 +74,10 @@ class Affordances:
             self.affs.append([valid_keys, aff_data])
             data_count += len(valid_keys)
 
+        self.valid_keys = list(sorted(set(self.valid_keys)))
+        self.classes = list(sorted(set([k.split("_00")[0] for k in self.inputs.keys()])))
+        self.num_classes = len(set([k.split("_00")[0] for k in self.valid_keys]))
+        
         inputs = []
         for k in training_keys:
             inputs.append(self.inputs[k])
@@ -80,7 +86,6 @@ class Affordances:
         self.input_scale.fit(inputs)
         print(str(data_count) + " image/aff pairs loaded")
         self.num_samples_per_class = k_shot + k_qry
-        self.sample_size = samples
         self.batch_size = batchsz
         self.dim_output = dim_out
         self.dim_latent = 2
@@ -128,35 +133,21 @@ class Affordances:
         return keys, inputs
 
     def next(self):
-        outputs = np.zeros([self.batch_size, self.sample_size * self.num_samples_per_class, self.dim_output])
-        init_inputs = np.zeros([self.batch_size, self.sample_size * self.num_samples_per_class, self.dim_input])
-        vals = []
+        init_inputs = np.zeros([self.batch_size, self.num_samples_per_class, self.dim_input])
+        outputs = np.zeros([self.batch_size, self.num_samples_per_class])
+        objects = list(set([k.split("_00")[0] for k in self.valid_keys]))
+        o = self.rand.choice(len(objects), self.batch_size, replace=False)
+        # Each "batch" is an object class
         for t in range(self.batch_size):
-            # Pick a random affordance
-            valid_objs = []
-            while len(valid_objs) < self.num_samples_per_class:
-                valid_keys = []
-                while len(valid_keys) == 0:
-                    a = self.rand.choice(len(self.affs))
-                    valid_keys, aff_data = self.affs[a]
-                # Pick a random object category with that affordance
-                categories = list(set([k.split("_")[0] for k in valid_keys]))
-                c = self.rand.choice(len(categories))
-                # Pick random objects in that category
-                valid_objs = list(set([k.split("_00")[0] for k in valid_keys if k.startswith(categories[c])]))
-            samples = self.rand.choice(len(valid_objs), self.num_samples_per_class, replace=False)
-            bx = self.rand.normal(0, self.output_std[0])
-            by = self.rand.normal(0, self.output_std[1])
-            bz = self.rand.normal(0, self.output_std[2])
-            for j in range(self.num_samples_per_class):
-                # Pick a random image for the current object
-                keys = [k for k in valid_keys if k.startswith(valid_objs[samples[j]])]
-                sample_keys = self.rand.choice(len(keys), self.sample_size, replace=False)
-                for k in range(self.sample_size):
-                    key = keys[sample_keys[k]]
-                    init_inputs[t,(self.sample_size * j) + k] = self.input_scale.transform(self.inputs[key].reshape(1,-1))
-                    data = np.array([aff_data[key][-1]]) #* self.dirs
-                    outputs[t,(self.sample_size * j) + k] = self.sc1.transform(data) + [bx,by,bz]
+            obj = objects[o[t]]
+            for c in range(len(self.classes)):
+                if obj == self.classes[c]:
+                    out = c
+            obj_keys = list(set([k for k in self.valid_keys if k.startswith(obj)]))
+            k = self.rand.choice(len(obj_keys), self.num_samples_per_class, replace=False)
+            for n in range(self.num_samples_per_class):
+                init_inputs[t,n] = self.input_scale.transform(self.inputs[obj_keys[k[n]]].reshape(1,-1))
+                outputs[t,n] = out
         return init_inputs, outputs
 
 if __name__ == '__main__':
