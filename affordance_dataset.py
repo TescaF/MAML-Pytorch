@@ -16,7 +16,7 @@ import torch
 import torch.nn as nn
 import torchvision.transforms as transforms
 from torch.autograd import Variable
-import torchvision.models.vgg as models
+import torchvision.models as models
 
 
 class ImageProc:
@@ -26,24 +26,30 @@ class ImageProc:
         self.temp_dir = "templates/"
 
     def get_centered_img(self, img, data):
-        # Get centerpoint
-        grasp_pts = [(i,j) for i in range(data.shape[0]) for j in range(data.shape[1]) if data[i,j] == 1]
-        if len(grasp_pts) == 0:
-            return None,None
-        clusters = sklearn.cluster.DBSCAN(eps=3, min_samples=20).fit_predict(grasp_pts)
-        disp_pts = [grasp_pts[i] for i in range(len(grasp_pts)) if clusters[i] > -1]
-        if len(disp_pts) == 0:
-            return None,None
-        cy, cx = [int(x) for x in np.median(disp_pts,axis=0)]
-        #plt.imshow(cv.cvtColor(img, cv.COLOR_BGR2RGB))
-        #plt.scatter([cx],[cy])
-        #plt.show()
-        value = min([cy, cx, img.shape[0] - cy, img.shape[1] - cx])
-        img_tf = cv.linearPolar(img, (cx,cy), value, cv.WARP_FILL_OUTLIERS)
-        feats = self.features_from_img(img_tf)
+        polar = True
+
+        if polar:
+            # Get centerpoint
+            grasp_pts = [(i,j) for i in range(data.shape[0]) for j in range(data.shape[1]) if data[i,j] == 1]
+            if len(grasp_pts) == 0:
+                return None,None
+            clusters = sklearn.cluster.DBSCAN(eps=3, min_samples=20).fit_predict(grasp_pts)
+            disp_pts = [grasp_pts[i] for i in range(len(grasp_pts)) if clusters[i] > -1]
+            if len(disp_pts) == 0:
+                return None,None
+            cy, cx = [int(x) for x in np.median(disp_pts,axis=0)]
+            #plt.imshow(cv.cvtColor(img, cv.COLOR_BGR2RGB))
+            #plt.scatter([cx],[cy])
+            #plt.show()
+            value = min([cy, cx, img.shape[0] - cy, img.shape[1] - cx])
+            img_tf = cv.linearPolar(img, (cx,cy), value, cv.WARP_FILL_OUTLIERS)
+            feats = self.features_from_img(img_tf)
+            label_tf = cv.linearPolar(data, (cx,cy), value, cv.WARP_FILL_OUTLIERS)
+        else:
+            feats = self.features_from_img(img)
+            label_tf = data
 
         # Get affordance point
-        label_tf = cv.linearPolar(data, (cx,cy), value, cv.WARP_FILL_OUTLIERS)
         aff_data = []
         for a in range(2,7):
             aff_pts = [(i,j) for i in range(label_tf.shape[0]) for j in range(label_tf.shape[1]) if label_tf[i,j] == a]
@@ -56,7 +62,6 @@ class ImageProc:
                     aff_data.append(None)
                 else:
                     dists = [p[1] for p in disp_pts]
-                    #dists = [math.sqrt((cy - p[1])**2.0 + (cx - p[0])**2.0) for p in disp_pts]
                     i = np.argmax(np.array(dists)) #dists.index(max(dists))
                     aff_data.append(disp_pts[i])
                     #plt.imshow(cv.cvtColor(img_tf, cv.COLOR_BGR2RGB))
@@ -64,6 +69,29 @@ class ImageProc:
                     #plt.show()
         return aff_data, feats
         
+    def save_standard_features(self):
+        depths, labels, images = [], [], []
+        dirs = os.listdir(self.base_dir + "tools/")
+        pos_dict = []
+        features = dict()
+        c2 = 0
+        for d in dirs:
+            print("Directory " + str(c2) + " of " + str(len(dirs)))
+            if os.path.isdir(self.base_dir + "tools/" + d):
+                files = os.listdir(self.base_dir + "tools/" + d)
+                objs = [i for i in files if i.endswith('label.mat') and int(i.split(d+"_")[1].split("_label")[0])%3==0]
+                c1 = 0
+                for o in objs:
+                    sys.stdout.write("\rFile %i of %i" %(c1, len(objs)))
+                    sys.stdout.flush()
+                    name = o.split("_label")[0]
+                    images.append(cv.imread(self.base_dir + "tools/" + d + '/' + o.split("label")[0] + 'rgb.jpg',-1))
+                    features[name] = self.features_from_img(images[-1])
+                    c1+=1
+            c2+=1
+            with open(self.base_dir + "features/resnet_fts.pkl", 'wb') as handle:
+                pickle.dump(features, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
     def convert_to_polar(self):
         depths, labels, images = [], [], []
         dirs = os.listdir(self.base_dir + "tools/")
@@ -400,9 +428,9 @@ class ImageProc:
             to_tensor = transforms.ToTensor()
             scaler = transforms.Resize((224, 224))
             img_var = Variable(normalize(to_tensor(scaler(img_in))).unsqueeze(0))
-            model = models.vgg16(pretrained=True)
-            layer = model._modules.get("classifier")[-2]
-            embedding = torch.zeros(4096) #self.dim_input)
+            model = models.resnet50(pretrained=True)
+            layer = model._modules.get("avgpool") #[-2]
+            embedding = torch.zeros(2048) #self.dim_input)
         except:
             return None
 
@@ -441,5 +469,6 @@ if __name__ == '__main__':
     #proc.save_transforms(transform=False)
     #proc.process_all_images()
     #proc.convert_to_polar()
-    proc.reduce_features()
+    #proc.reduce_features()
     #proc.proc_features()
+    proc.save_standard_features()

@@ -1,5 +1,5 @@
 import pdb
-from torch.utils.tensorboard import SummaryWriter
+#from torch.utils.tensorboard import SummaryWriter
 import  torch, os
 import  numpy as np
 import  scipy.stats
@@ -7,7 +7,7 @@ import  random, sys, pickle
 import  argparse
 import torch.nn.functional as F
 from basic_meta import Meta
-from affordances import Affordances
+from basic_aff import Affordances
 
 def mod_mse_loss(data, target):
     sc = torch.cuda.FloatTensor([1])
@@ -23,7 +23,7 @@ def main():
     torch.cuda.manual_seed_all(222)
     np.random.seed(222)
     np.set_printoptions(precision=5,suppress=True)
-    logger = SummaryWriter()
+    #logger = SummaryWriter()
     print(args)
 
     dim_output = 128 
@@ -48,12 +48,14 @@ def main():
     save_path = os.getcwd() + '/data/tfs/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_exclude' + str(args.exclude) + '_epoch'
     print(str(db_train.dim_input) + "-D input")
     config = [
+        #('linear', [db_train.num_classes,db_train.dim_input])]
         ('linear', [128,db_train.dim_input]),
         ('relu', [True]),
         ('linear', [db_train.num_classes,128])
     ]
 
-    device = torch.device('cuda')
+    device = torch.device('cpu')
+    #device = torch.device('cuda')
     maml = Meta(args, config, None, torch.eq).to(device)
     #maml.loss_fn = maml.fisher_loss
     maml.loss_fn = maml.cross_entropy_loss
@@ -70,7 +72,7 @@ def main():
         x_spt, y_spt = db_train.next()
         x_spt, y_spt = torch.from_numpy(x_spt).float().to(device), torch.from_numpy(y_spt).long().to(device)
 
-        loss, acc = maml.forward_batch(x_spt, y_spt)
+        loss, acc = maml.forward_batch(x_spt, y_spt, epoch%50==0)
         losses.append(acc)
 
         if epoch % 30 == 0:
@@ -93,6 +95,19 @@ def main():
             loss = np.array(test_losses).mean()
             print('Test loss:', loss)'''
             torch.save(maml.state_dict(), save_path + str(epoch%2000) + "_al.pt")
+
+        '''if epoch % 20000 == 0:  # evaluation
+            cam = torch.mm(maml.net.parameters()[0][class_num].unsqueeze(0), embedding.reshape((2048,49)))
+            outs = cam.reshape((7,7))
+            outs = outs - torch.min(outs)
+            outs = outs / torch.max(outs)
+            outs = np.uint8(outs.cpu().detach().numpy() * 255)
+            layer = cv.resize(outs, (640,480))
+            heatmap = cv.applyColorMap(layer, cv.COLORMAP_JET)
+            cv.addWeighted(heatmap, 0.3, polar_img, 0.7, 0, heatmap)
+            cv.imshow("im", heatmap)
+            cv.waitKey()
+            cv.destroyAllWindows()'''
 
 if __name__ == '__main__':
 

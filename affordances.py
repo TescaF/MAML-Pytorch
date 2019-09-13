@@ -31,7 +31,8 @@ class Affordances:
         self.affs, vals_max, vals_min = [], [], []
         data_count = 0
         #fts_loc = "/home/tesca/data/part-affordance-dataset/features/polar/reduced_fts_0.95.pkl"
-        fts_loc = "/home/tesca/data/part-affordance-dataset/features/resnet_polar_fts.pkl"
+        fts_loc = "/home/tesca/data/part-affordance-dataset/features/resnet_fts.pkl"
+        #fts_loc = "/home/tesca/data/part-affordance-dataset/features/resnet_polar_fts.pkl"
         ## Load VGG features for all images
         with open(fts_loc, 'rb') as handle:
             self.inputs = pickle.load(handle)       #dict(img) = [[4096x1], ... ]
@@ -80,7 +81,7 @@ class Affordances:
             data_count += len(valid_keys)
 
         self.valid_keys = list(sorted(set(self.valid_keys)))
-        self.classes = list(sorted(set([k.split("_00")[0] for k in self.inputs.keys()])))
+        self.classes = list(sorted(set([k.split("_00")[0] for k in self.valid_keys])))
         self.num_classes = len(set([k.split("_00")[0] for k in self.valid_keys]))
         
         inputs = []
@@ -145,13 +146,12 @@ class Affordances:
         # Each "batch" is an object class
         for t in range(self.batch_size):
             obj = objects[o[t]]
-            for c in range(len(self.classes)):
-                if obj == self.classes[c]:
-                    out = c
+            out = self.classes.index(obj)
             obj_keys = list(set([k for k in self.valid_keys if k.startswith(obj)]))
             k = self.rand.choice(len(obj_keys), self.num_samples_per_class, replace=False)
             for n in range(self.num_samples_per_class):
                 init_inputs[t,n] = self.input_scale.transform(self.inputs[obj_keys[k[n]]].reshape(1,-1))
+                #init_inputs[t,n] = self.input_scale.transform(self.inputs[obj_keys[k[n]]].reshape(1,-1))
                 outputs[t,n] = out
         return init_inputs, outputs
 

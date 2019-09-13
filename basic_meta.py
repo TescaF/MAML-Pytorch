@@ -78,11 +78,13 @@ class Meta(nn.Module):
         loss = self.loss_fn(logits_q)
         return loss.item()
 
-    def forward_batch(self, x_spt, y_spt):
-        x = x_spt.view((-1,2048))
+    def forward_batch(self, x_spt, y_spt, debug=False):
+        x = x_spt.view((-1,x_spt.shape[-1]))
         logits = self.net(x, None, bn_training=True)
         pred_q = F.softmax(logits,dim=1).argmax(dim=1)
         correct_a = self.accs_fn(pred_q, y_spt.flatten()).sum().item()  # convert to numpy
+        #if debug:
+        #    pdb.set_trace()
         loss = self.loss_fn(logits, y_spt)
         ## Optimize parameters
         self.meta_optim.zero_grad()
