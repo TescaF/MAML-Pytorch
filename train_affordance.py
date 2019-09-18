@@ -7,7 +7,7 @@ import  random, sys, pickle
 import  argparse
 import torch.nn.functional as F
 from basic_meta import Meta
-from basic_aff import Affordances
+from reg_aff import Affordances
 
 def mod_mse_loss(data, target):
     sc = torch.cuda.FloatTensor([1])
@@ -26,7 +26,7 @@ def main():
     #logger = SummaryWriter()
     print(args)
 
-    dim_output = 128 
+    dim_output = 3
     sample_size = args.task_num # number of images per object
 
     db_train = Affordances(
@@ -47,18 +47,22 @@ def main():
 
     save_path = os.getcwd() + '/data/tfs/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_exclude' + str(args.exclude) + '_epoch'
     print(str(db_train.dim_input) + "-D input")
+    dim = db_train.dim_input
     config = [
         #('linear', [db_train.num_classes,db_train.dim_input])]
-        ('linear', [128,db_train.dim_input]),
+        ('linear', [dim, dim]),
         ('relu', [True]),
-        ('linear', [db_train.num_classes,128])
+        ('avg_pool2d', [7,7,0]),
+        ('flatten', []),
+        ('linear', [3,49])
     ]
 
     device = torch.device('cpu')
     #device = torch.device('cuda')
-    maml = Meta(args, config, None, torch.eq).to(device)
+    maml = Meta(args, config, F.mse_loss, None).to(device)
+    #maml = Meta(args, config, None, torch.eq).to(device)
     #maml.loss_fn = maml.fisher_loss
-    maml.loss_fn = maml.cross_entropy_loss
+    #maml.loss_fn = maml.cross_entropy_loss
     #maml = Meta(args, config, "mod_mse_loss", None).to(device)
 
     tmp = filter(lambda x: x.requires_grad, maml.parameters())

@@ -49,7 +49,7 @@ class Learner(nn.Module):
 
             elif name is 'linear':
                 # [ch_out, ch_in]
-                w = nn.Parameter(torch.ones(*param))
+                w = nn.Parameter(torch.ones(*param[:2]))
                 # gain=1 according to cbfinn's implementation
                 torch.nn.init.kaiming_normal_(w)
                 self.vars.append(w)
@@ -130,7 +130,6 @@ class Learner(nn.Module):
         :param bn_training: set False to not update
         :return: x, loss, likelihood, kld
         """
-
         if vars is None:
             vars = self.vars
         if last_layer:
@@ -165,7 +164,10 @@ class Learner(nn.Module):
                 # print(name, param, '\tout:', x.shape)
             elif name is 'linear':
                 w, b = vars[idx], vars[idx + 1]
-                x = F.linear(x, w, b)
+                if param[2]:
+                    x = F.linear(x, w, b)
+                else:
+                    x = F.linear(x, w, None)
                 idx += 2
                 # print('forward:', idx, x.norm().item())
             elif name is 'bn':
@@ -195,8 +197,8 @@ class Learner(nn.Module):
             elif name is 'max_pool2d':
                 x = F.max_pool2d(x, param[0], param[1], param[2])
             elif name is 'avg_pool2d':
-                x = F.avg_pool2d(x, param[0], param[1], param[2])
                 pdb.set_trace()
+                x = F.avg_pool2d(x, param[0], param[1], param[2])
 
             else:
                 raise NotImplementedError
