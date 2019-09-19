@@ -1,3 +1,4 @@
+import math
 import pdb
 #from torch.utils.tensorboard import SummaryWriter
 import  torch, os
@@ -71,22 +72,22 @@ def main():
     dim = db_train.dim_input
     config = [
         #('linear', [db_train.num_classes,db_train.dim_input])]
-        ('linear', [dim, dim, True]),
-        ('linear', [1, dim, True]),
+        ('linear', [1, dim, False]),
         ('flatten', []),
         ('relu', [True]),
         #('reshape',[7,7]),
-        ('linear', [49,49,True]),
-        ('relu', [True]),
-        ('linear', [dim_output,49,True]),
-        ('tanh', [None]) 
+        #('linear', [49,49,True]),
+        #('relu', [True]),
+        ('linear', [100,49,True]),
+        ('sigmoid', [True])
+        #('tanh', [None]) 
     ]
 
     #device = torch.device('cpu')
     device = torch.device('cuda')
-    maml = Meta(args, config, F.mse_loss, None).to(device)
+    maml = Meta(args, config, None, None).to(device)
     #maml = Meta(args, config, None, torch.eq).to(device)
-    #maml.loss_fn = maml.fisher_loss
+    maml.loss_fn = maml.activation_loss
     #maml.loss_fn = maml.cross_entropy_loss
     #maml = Meta(args, config, "mod_mse_loss", None).to(device)
 
@@ -126,7 +127,15 @@ def main():
                                          torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device)
 
             for x_spt_one, y_spt_one, x_qry_one, y_qry_one,names_one,cart_y in zip(x_spt,y_spt,x_qry,y_qry,names,cart_output):
-                loss,tuned_w,_ = maml.finetuning(x_spt_one,y_spt_one,x_qry_one,y_qry_one)   
+                loss,tuned_w,res = maml.finetuning(x_spt_one,y_spt_one,x_qry_one,y_qry_one)   
+                max_idx = res.max(1).indices
+                w = math.sqrt(res.shape[1])
+                y = (torch.floor(max_idx.float()/w)/(w/2))-1
+                x = (torch.fmod(max_idx.float(),w)/(w/2))-1
+                v1 = torch.stack([x,y]).transpose(0,1)
+                v2 = torch.stack([y,x]).transpose(0,1)
+                print("v1 MSE: " + str(F.mse_loss(y_qry_one,v1).item()))
+                print("v2 MSE: " + str(F.mse_loss(y_qry_one,v2).item()))
                 spt_names = names_one[:x_spt_one.shape[0]]
                 for i in range(x_spt_one.shape[0]):
                     name = spt_names[i]
