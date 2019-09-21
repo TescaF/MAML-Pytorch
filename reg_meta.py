@@ -57,52 +57,11 @@ class Meta(nn.Module):
         self.loss_fn = loss_fn
         self.accs_fn = accs_fn
 
-    def hinge_loss(self, act, y):
-        vals = torch.mean(act.reshape([act.shape[0] * act.shape[1],49,2048]),dim=1)
-        objs = y.reshape([100])
-        z = torch.cuda.FloatTensor([0])
-        l = 0
-        for i in range(vals.shape[0]):
-            for j in range(vals.shape[0]):
-                if not i == j:
-                    t = (1 if objs[i] == objs[j] else -1)
-                    p = (t * torch.norm(vals[i]-vals[j])) + 1
-                    l += torch.max(z, (t * torch.norm(vals[i]-vals[j])) + 1)
-        return l
-        
-    def fisher_loss(self, proj, y, debug):
-        within_var, between_var = 0, 0
-        vals = torch.mean(proj.reshape([proj.shape[0], proj.shape[1],-1,proj.shape[-1]]),dim=2)
-        total_mean = torch.mean(vals.reshape([-1,vals.shape[-1]]), dim=0)
-        for c in range(proj.shape[0]):
-            class_mean = torch.mean(vals[c], dim=0)
-            b_diff = class_mean - total_mean
-            between_var += torch.dot(b_diff,b_diff)
-            for s in range(proj.shape[1]):
-                w_diff = vals[c,s] - class_mean
-                within_var += torch.dot(w_diff,w_diff)
-        if debug:
-            print(str(within_var.item() ) + ", " + str(between_var.item()))
-        return torch.max(torch.cuda.FloatTensor([0]), within_var / (0.01 * between_var)) # - (0.01 * between_var))
-
-    def forward_batch(self, x_spt, y_spt, debug=False):
-        logits = self.net(x_spt, None, bn_training=True)
-        loss = F.cross_entropy(logits, y_spt)
-        ## Optimize parameters
-        self.meta_optim.zero_grad()
-        loss.backward()
-        self.meta_optim.step()
-
-        post_logits = self.net(x_spt, None, bn_training=True)
-        post_loss = F.cross_entropy(post_logits, y_spt)
-        return loss.item(), post_loss.item()
-
     def forward(self, x_spt, y_spt, x_qry, y_qry,print_flag=False):
         task_num = x_spt.size(0)
         losses_q, losses_s = 0, 0
         corrects = [0 for _ in range(self.update_step + 1)]
         train_corrects = [0 for _ in range(self.update_step + 1)]
-        al_corrects = 0.0
 
         for i in range(task_num):
             s_weights = self.net.parameters()
@@ -120,11 +79,15 @@ class Meta(nn.Module):
             ## Update model w.r.t. task loss
             for k in range(self.update_step):
                 logits_a = self.net(x_spt[i], vars=s_weights, bn_training=True)
+                hook = self.net(x_spt[i], vars=s_weights, bn_training=True,hook=2)
+                if len(hook.nonzero()) == 0:
+                    pdb.set_trace()
                 loss = self.loss_fn(logits_a, y_spt[i])
                 train_corrects[k] = train_corrects[k] + loss.item()
                 grad_a = list(torch.autograd.grad(loss, s_weights,allow_unused=True))
                 for g in range(len(grad_a)):
                     if grad_a[g] is None:
+                        pdb.set_trace()
                         grad_a[g] = torch.zeros_like(s_weights[g])
                 s_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad_a, s_weights)))  
                 del loss, grad_a, logits_a
@@ -150,9 +113,11 @@ class Meta(nn.Module):
         ## Get total losses after all tasks
         total_loss =  losses_q / task_num #) + (losses_q/losses_s)
         ## Optimize parameters
+        #hook1 = self.net(x_spt[0],hook=2)
         self.meta_optim.zero_grad()
         total_loss.backward()
         self.meta_optim.step()
+        #hook2 = self.net(x_spt[0],hook=2)
         loss = total_loss.item()
         del total_loss, losses_q
 
@@ -162,7 +127,7 @@ class Meta(nn.Module):
         accs = np.array(corrects) / task_num
         return accs, loss, np.array(train_corrects)/task_num
 
-    def finetuning(self, x_spt, y_spt, x_qry, y_qry):
+    def finetuning(self, x_spt, y_spt, x_qry, y_qry, debug=False):
         querysz = x_qry.size(0)
 
         corrects = [0 for _ in range(self.update_step_test + 1)]
@@ -200,7 +165,7 @@ class Meta(nn.Module):
                     correct = self.accs_fn(pred_q, y_qry).sum().item()/querysz  # convert to numpy
                     del pred_q
                 corrects[k + 1] = corrects[k + 1] + correct
-            cam_vals = self.net(x_spt,vars=fast_weights,bn_training=True,hook=2)
+            cam_vals = self.net(x_spt,vars=fast_weights,bn_training=True,hook=4,debug=debug)
 
         del net
         accs = np.array(corrects) 

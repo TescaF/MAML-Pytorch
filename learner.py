@@ -131,7 +131,7 @@ class Learner(nn.Module):
 
 
 
-    def forward(self, x, vars=None, bn_training=True,dropout_rate=-1, hook=None, last_layer=False):
+    def forward(self, x, vars=None, bn_training=True,dropout_rate=-1, hook=None, last_layer=False,debug=False):
         """
         This function can be called by finetunning, however, in finetunning, we dont wish to update
         running_mean/running_var. Thought weights/bias of bn is updated, it has been separated by fast_weights.
@@ -155,6 +155,8 @@ class Learner(nn.Module):
         p = 0
 
         for name, param in self.config[c:]:
+            if debug:
+                pdb.set_trace()
             if hook == p:
                 hook_data = x
             p += 1
@@ -216,7 +218,9 @@ class Learner(nn.Module):
             elif name is 'max_pool2d':
                 x = F.max_pool2d(x, param[0], param[1], param[2])
             elif name is 'avg_pool2d':
+                pdb.set_trace()
                 x = F.avg_pool2d(x, param[0], param[1], param[2])
+                pdb.set_trace()
 
             else:
                 raise NotImplementedError
