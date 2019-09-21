@@ -19,9 +19,7 @@ def mod_mse_loss(data, target):
 
     return F.mse_loss(data, target)
 
-def get_CAM(conv_out, tf, fts):
-    nc, h, w = conv_out.shape
-    cam = fts.reshape(h, w)
+def get_CAM(cam):
     '''img = np.zeros((640,480))
     dims = [480,640]
     tf_range = tf.transform(np.array([dims])) - tf.transform(np.array([[0,0]]))
@@ -44,8 +42,8 @@ def main():
     #logger = SummaryWriter()
     print(args)
 
-    polar = True
-    dim_output = 2
+    polar = False
+    dim_output = 1
     sample_size = args.sample_size # number of images per object
 
     db_train = Affordances(
@@ -70,24 +68,25 @@ def main():
     save_path = os.getcwd() + '/data/tfs/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_exclude' + str(args.exclude) + '_epoch'
     print(str(db_train.dim_input) + "-D input")
     dim = db_train.dim_input
+    if polar:
+        out_dim = 87
+    else:
+        out_dim = 105
     config = [
-        #('linear', [db_train.num_classes,db_train.dim_input])]
-        ('linear', [1, dim, False]),
-        ('flatten', []),
+        ('linear', [512,dim,True]),
         ('relu', [True]),
-        #('reshape',[7,7]),
-        #('linear', [49,49,True]),
-        #('relu', [True]),
-        ('linear', [100,49,True]),
-        ('sigmoid', [True])
-        #('tanh', [None]) 
+        ('reshape',[512,7,7]),
+        ('avg_pool2d', [7,7,0]),
+        ('reshape',[512]),
+        ('linear', [out_dim,512,True])
     ]
+
 
     #device = torch.device('cpu')
     device = torch.device('cuda')
     maml = Meta(args, config, None, None).to(device)
     #maml = Meta(args, config, None, torch.eq).to(device)
-    maml.loss_fn = maml.activation_loss
+    maml.loss_fn = maml.fisher_loss
     #maml.loss_fn = maml.cross_entropy_loss
     #maml = Meta(args, config, "mod_mse_loss", None).to(device)
 
@@ -99,64 +98,46 @@ def main():
     losses,training = [],[]
     k_spt = args.k_spt * sample_size
     for epoch in range(args.epoch):
-        batch_x, batch_y,_,_ = db_train.next()
-        x_spt = batch_x[:,:k_spt,:]
-        y_spt = batch_y[:,:k_spt,:]
-        x_qry = batch_x[:,k_spt:,:]
-        y_qry = batch_y[:,k_spt:,:]
-        x_spt, y_spt, x_qry, y_qry = torch.from_numpy(x_spt).float().to(device), torch.from_numpy(y_spt).float().to(device), \
-                                     torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device)
-
-        acc, loss, train_acc = maml(x_spt, y_spt, x_qry, y_qry)
+        x_spt,y_spt,_ = db_train.get_all() #next()
+        x_spt = torch.from_numpy(x_spt).float().to(device)
+        y_spt = torch.from_numpy(y_spt).to(device)
+        acc = maml.forward_batch(x_spt,y_spt) #,y_spt,debug=epoch%100==0)
         losses.append(acc)
-        training.append(train_acc)
+        #training.append(train_acc)
 
         if epoch % 30 == 0:
             print('step:', epoch, '\ttesting  loss:', np.array(losses).mean(axis=0))
-            print('step:', epoch, '\ttraining loss:', np.array(training).mean(axis=0))
+            #print('step:', epoch, '\ttraining loss:', np.array(training).mean(axis=0))
             losses,training = [],[]
 
-        if epoch % 500 == 0:  # evaluation
+        if epoch % 5000 == 0:  # evaluation
             
-            batch_x,batch_y,names,cart_output = db_train.next()
-            x_spt = batch_x[:,:k_spt,:]
-            y_spt = batch_y[:,:k_spt,:]
-            x_qry = batch_x[:,k_spt:,:]
-            y_qry = batch_y[:,k_spt:,:]
-            x_spt, y_spt, x_qry, y_qry = torch.from_numpy(x_spt).float().to(device), torch.from_numpy(y_spt).float().to(device), \
-                                         torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device)
+            x_spt,y_spt,names = db_train.get_all() #next()
+            x_spt = torch.from_numpy(x_spt).float().to(device)
+            y_spt = torch.from_numpy(y_spt).to(device)
 
-            for x_spt_one, y_spt_one, x_qry_one, y_qry_one,names_one,cart_y in zip(x_spt,y_spt,x_qry,y_qry,names,cart_output):
-                loss,tuned_w,res = maml.finetuning(x_spt_one,y_spt_one,x_qry_one,y_qry_one)   
-                max_idx = res.max(1).indices
-                w = math.sqrt(res.shape[1])
-                y = (torch.floor(max_idx.float()/w)/(w/2))-1
-                x = (torch.fmod(max_idx.float(),w)/(w/2))-1
-                v1 = torch.stack([x,y]).transpose(0,1)
-                v2 = torch.stack([y,x]).transpose(0,1)
-                print("v1 MSE: " + str(F.mse_loss(y_qry_one,v1).item()))
-                print("v2 MSE: " + str(F.mse_loss(y_qry_one,v2).item()))
-                spt_names = names_one[:x_spt_one.shape[0]]
-                for i in range(x_spt_one.shape[0]):
-                    name = spt_names[i]
-                    cam = get_CAM(x_spt_one[i].transpose(0,-1), db_train.output_scale, tuned_w[i])
-                    pref = name.split("_00")[0]
-                    if polar:
-                        try:
-                            img = cv.imread('/home/tesca/data/part-affordance-dataset/polar_tools/' + name + '_polar.jpg')
-                        except:
-                            img = None
-                    else:
-                        img = cv.imread('/home/tesca/data/part-affordance-dataset/tools/' + pref + '/' + name + '_rgb.jpg')
-                    if img is not None:
-                        height, width, _ = img.shape
-                        heatmap = cv.applyColorMap(cv.resize(cam,(width, height)), cv.COLORMAP_JET)
-                        result = heatmap * 0.3 + img * 0.5
-                        pos = db_train.output_scale.inverse_transform(y_spt_one[i].cpu().numpy().reshape(1,-1)).squeeze()
-                        cv.circle(result,(pos[1],pos[0]),5,[255,255,0])
-                        cv.imwrite('cam_img/' + name + '_CAM.jpg', result)
+            a = torch.softmax(maml.net(x_spt),dim=1).argmax(dim=1)
+            w = maml.net(x_spt,hook=1)
+            for i in range(x_spt.shape[0]):
+                name = names[i]
+                cam = get_CAM(torch.mean(torch.mul(w[i],maml.net.parameters()[-2][a[i]]),dim=-1))
+                pref = name.split("_00")[0]
+                if polar:
+                    try:
+                        img = cv.imread('/home/tesca/data/part-affordance-dataset/polar_tools/' + name + '_polar.jpg')
+                    except:
+                        img = None
+                else:
+                    img = cv.imread('/home/tesca/data/part-affordance-dataset/tools/' + pref + '/' + name + '_rgb.jpg')
+                if img is not None:
+                    height, width, _ = img.shape
+                    heatmap = cv.applyColorMap(cv.resize(cam,(width, height)), cv.COLORMAP_JET)
+                    result = heatmap * 0.3 + img * 0.5
+                    #pos = db_train.output_scale.inverse_transform(y_spt_one[i].cpu().numpy().reshape(1,-1)).squeeze()
+                    #cv.circle(result,(pos[1],pos[0]),5,[255,255,0])
+                    cv.imwrite('cam_img/' + name + '_CAM.jpg', result)
 
-                
+            
             '''test_losses = []
 
 

@@ -57,90 +57,45 @@ class Meta(nn.Module):
         self.loss_fn = loss_fn
         self.accs_fn = accs_fn
 
-    def activation_loss(self, act, y):
-        dim = math.sqrt(act.shape[1]) 
-        dist = torch.cuda.FloatTensor([0])
-        for i in range(act.shape[0]):
-            a = torch.softmax(act[i],dim=0)
-            for px in range(int(dim)):
-                for py in range(int(dim)):
-                    dist += a[int(px*dim + py)] * ((((px/(dim/2)) - 1) - y[i][0])**2 + (((py/(dim/2)) - 1) - y[i][1])**2)
-        return dist
-        
-    def kl_loss(self, act, y):
-        dim = 10
-        '''loss = 0.0
-        z = torch.zeros(1).cuda()
-        D = []
-        for i in range(act.shape[0]):
-            d = []
-            a = act[i].reshape(dim,dim)
-            for px in range(a.shape[0]):
-                for py in range(a.shape[1]):
-                    d.append((((px/(dim/2)) - 1) - y[i][0])**2 + (((py/(dim/2)) - 1) - y[i][1])**2)
-            D.append(torch.softmax(-torch.stack(d),dim=0))'''
-
-        D,D2 = [],[]
-        for i in range(act.shape[0]):
-            a = act[i].reshape(dim,dim)
-            d = []
-            cx = ((y[i][0] + 1) * (dim/2)).item()
-            cy = ((y[i][1] + 1) * (dim/2)).item()
-            dev = 0.1 * dim
-            for px in range(a.shape[0]):
-                for py in range(a.shape[1]):
-                    v = norm.pdf(px, loc=cx, scale=dev) * norm.pdf(py,loc=cy,scale=dev)
-                    d.append(torch.cuda.FloatTensor([v]))
-            D.append(torch.stack(d))
-            D2.append(torch.stack(d)/sum(d))
-        D = torch.stack(D).squeeze()
-        D2 = torch.stack(D2).squeeze()
-        A = torch.softmax(act,dim=1)
-        l = F.kl_div(torch.log(D2),A,reduction="sum")
+    def hinge_loss(self, act, y):
+        vals = torch.mean(act.reshape([act.shape[0] * act.shape[1],49,2048]),dim=1)
+        objs = y.reshape([100])
+        z = torch.cuda.FloatTensor([0])
+        l = 0
+        for i in range(vals.shape[0]):
+            for j in range(vals.shape[0]):
+                if not i == j:
+                    t = (1 if objs[i] == objs[j] else -1)
+                    p = (t * torch.norm(vals[i]-vals[j])) + 1
+                    l += torch.max(z, (t * torch.norm(vals[i]-vals[j])) + 1)
         return l
         
-    def cross_entropy_loss(self, proj, y):
-        rs_x = proj.view((-1,proj.shape[-1]))
-        rs_y = y.flatten()
-        l = F.cross_entropy(rs_x,rs_y)
-        return l
-
-    def fisher_loss(self, proj, y):
+    def fisher_loss(self, proj, y, debug):
         within_var, between_var = 0, 0
-        total_mean = torch.mean(proj.view((-1,proj.shape[-1])), axis=0)
+        vals = torch.mean(proj.reshape([proj.shape[0], proj.shape[1],-1,proj.shape[-1]]),dim=2)
+        total_mean = torch.mean(vals.reshape([-1,vals.shape[-1]]), dim=0)
         for c in range(proj.shape[0]):
-            class_mean = torch.mean(proj[c], axis=0)
-            diff = class_mean - total_mean
-            between_var += torch.dot(diff,diff)
+            class_mean = torch.mean(vals[c], dim=0)
+            b_diff = class_mean - total_mean
+            between_var += torch.dot(b_diff,b_diff)
             for s in range(proj.shape[1]):
-                diff = proj[c,s] - class_mean
-                within_var += torch.dot(diff,diff)
-        return torch.max(torch.cuda.FloatTensor([0]), within_var - (0.01 * between_var))
-
-    def test(self, x):
-        logits_q = self.net(x, None, bn_training=True)
-        loss = self.loss_fn(logits_q)
-        return loss.item()
+                w_diff = vals[c,s] - class_mean
+                within_var += torch.dot(w_diff,w_diff)
+        if debug:
+            print(str(within_var.item() ) + ", " + str(between_var.item()))
+        return torch.max(torch.cuda.FloatTensor([0]), within_var / (0.01 * between_var)) # - (0.01 * between_var))
 
     def forward_batch(self, x_spt, y_spt, debug=False):
-        x = x_spt.view((-1,x_spt.shape[-1]))
-        logits = self.net(x, None, bn_training=True)
-        pred_q = F.softmax(logits,dim=1).argmax(dim=1)
-        correct_a = self.accs_fn(pred_q, y_spt.flatten()).sum().item()  # convert to numpy
-        #if debug:
-        #    pdb.set_trace()
-        loss = self.loss_fn(logits, y_spt)
+        logits = self.net(x_spt, None, bn_training=True)
+        loss = F.cross_entropy(logits, y_spt)
         ## Optimize parameters
         self.meta_optim.zero_grad()
         loss.backward()
         self.meta_optim.step()
 
-        logits = self.net(x, None, bn_training=True)
-        pred_q = F.softmax(logits,dim=1).argmax(dim=1)
-        correct_b = self.accs_fn(pred_q, y_spt.flatten()).flatten().sum().item()  # convert to numpy
-
-        accs = [correct_a / x.shape[0], correct_b / x.shape[0]]
-        return loss.item(), accs
+        post_logits = self.net(x_spt, None, bn_training=True)
+        post_loss = F.cross_entropy(post_logits, y_spt)
+        return loss.item(), post_loss.item()
 
     def forward(self, x_spt, y_spt, x_qry, y_qry,print_flag=False):
         task_num = x_spt.size(0)

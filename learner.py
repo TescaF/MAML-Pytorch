@@ -47,6 +47,14 @@ class Learner(nn.Module):
                 # [ch_in, ch_out]
                 self.vars.append(nn.Parameter(torch.zeros(param[1])))
 
+            elif name is 'reweight':
+                # [ch_out, ch_in]
+                w = nn.Parameter(torch.ones(param[0]))
+                # gain=1 according to cbfinn's implementation
+                self.vars.append(w)
+                # [ch_out]
+                self.vars.append(nn.Parameter(torch.zeros(param[0])))
+
             elif name is 'linear':
                 # [ch_out, ch_in]
                 w = nn.Parameter(torch.ones(*param[:2]))
@@ -70,7 +78,7 @@ class Learner(nn.Module):
 
 
             elif name in ['tanh', 'relu', 'upsample', 'avg_pool2d', 'max_pool2d',
-                          'flatten', 'reshape', 'leakyrelu', 'sigmoid']:
+                          'flatten', 'reshape', 'leakyrelu', 'sigmoid','softmax']:
                 continue
             else:
                 raise NotImplementedError
@@ -98,6 +106,10 @@ class Learner(nn.Module):
                 tmp = 'linear:(in:%d, out:%d)'%(param[1], param[0])
                 info += tmp + '\n'
 
+            elif name is 'reweight':
+                tmp = 'reweight:(in:%d, out:%d)'%(param[0], param[0])
+                info += tmp + '\n'
+
             elif name is 'leakyrelu':
                 tmp = 'leakyrelu:(slope:%f)'%(param[0])
                 info += tmp + '\n'
@@ -109,7 +121,7 @@ class Learner(nn.Module):
             elif name is 'max_pool2d':
                 tmp = 'max_pool2d:(k:%d, stride:%d, padding:%d)'%(param[0], param[1], param[2])
                 info += tmp + '\n'
-            elif name in ['flatten', 'tanh', 'relu', 'upsample', 'reshape', 'sigmoid', 'use_logits', 'bn']:
+            elif name in ['flatten', 'tanh', 'relu', 'upsample', 'reshape', 'softmax','sigmoid', 'use_logits', 'bn']:
                 tmp = name + ':' + str(tuple(param))
                 info += tmp + '\n'
             else:
@@ -162,6 +174,11 @@ class Learner(nn.Module):
                 x = F.conv_transpose2d(x, w, b, stride=param[4], padding=param[5])
                 idx += 2
                 # print(name, param, '\tout:', x.shape)
+            elif name is 'reweight':
+                w = vars[idx]
+                x = torch.mul(x, w)
+                idx += 2
+                # print('forward:', idx, x.norm().item())
             elif name is 'linear':
                 w, b = vars[idx], vars[idx + 1]
                 if param[2]:
@@ -192,12 +209,13 @@ class Learner(nn.Module):
                 #x = F.tanh(x)
             elif name is 'sigmoid':
                 x = torch.sigmoid(x)
+            elif name is 'softmax':
+                x = torch.softmax(x)
             elif name is 'upsample':
                 x = F.upsample_nearest(x, scale_factor=param[0])
             elif name is 'max_pool2d':
                 x = F.max_pool2d(x, param[0], param[1], param[2])
             elif name is 'avg_pool2d':
-                pdb.set_trace()
                 x = F.avg_pool2d(x, param[0], param[1], param[2])
 
             else:

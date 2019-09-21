@@ -110,6 +110,19 @@ class Affordances:
         return img_var
 
 
+    def get_all(self):
+        all_objs = list(set([k.split("_00")[0] for k in self.valid_keys]))
+        inputs, labels, names = [],[],[] #np.zeros([len(all_objs), self.sample_size, 7,7,2048])
+        obj_idxs = self.rand.choice(len(all_objs), len(all_objs), replace=False)
+        for i in range(len(all_objs)):
+            sample_keys = list([key for key in self.valid_keys if key.startswith(all_objs[obj_idxs[i]])])
+            idxs = self.rand.choice(len(sample_keys), self.sample_size, replace=True)
+            for j in range(self.sample_size):
+                inputs.append(self.inputs[sample_keys[idxs[j]]].transpose())
+                labels.append(obj_idxs[i])
+                names.append(sample_keys[idxs[j]])
+        return np.stack(inputs), np.array(labels), names
+
     def next(self):
         init_inputs = np.zeros([self.batch_size, self.num_samples_per_class * self.sample_size, 7,7,2048])
         outputs = np.zeros([self.batch_size, self.num_samples_per_class * self.sample_size, self.dim_output])
@@ -140,12 +153,13 @@ class Affordances:
                     fts = self.inputs[sample_keys[sk[s]]]
                     tf_fts = self.input_scale.transform(fts.flatten().reshape(1,-1))
                     input_list.append(tf_fts.reshape((2048,7,7)).transpose())
-                    output_list.append(self.output_scale.transform(np.array([aff_data[sample_keys[sk[s]]][-1]])[:,:self.dim_output].reshape(1,-1)).squeeze()) # + tf)
+                    #output_list.append(self.output_scale.transform(np.array([aff_data[sample_keys[sk[s]]][-1]])[:,:self.dim_output].reshape(1,-1)).squeeze() + tf)
+                    output_list.append([k[n]])
                     cart_out.append(self.cart_affs[aff_num][sample_keys[sk[s]]])
             tmp_scale = preprocessing.MinMaxScaler(feature_range=(-1,1))
             init_inputs[t] = np.stack(input_list)
-            #outputs[t] = tmp_scale.fit_transform(np.stack(output_list))
-            outputs[t] = np.stack(output_list)[:,:2]
+            #outputs[t] = tmp_scale.fit_transform(np.stack(output_list)[:,:self.dim_output])
+            outputs[t] = np.stack(output_list)
             selected_keys.append(sel_keys)
             cart_outputs.append(cart_out)
         return init_inputs, outputs, selected_keys, cart_outputs
