@@ -104,7 +104,7 @@ class Affordances:
             aff_num = self.rand.choice(len(valid_affs))
             valid_keys, aff_data = self.affs[valid_affs[aff_num]]
             obj_keys = list(set([k.split("_00")[0] for k in valid_keys if k.startswith(cat)]))
-            tf = self.rand.uniform(-0.5,0.5,self.dim_output)
+            tf = self.rand.uniform(-0.50,0.50,self.dim_output)
             k = self.rand.choice(len(obj_keys), self.num_samples_per_class, replace=False)
             for n in range(self.num_samples_per_class):
                 sample_keys = list([key for key in valid_keys if key.startswith(obj_keys[k[n]])])
@@ -113,12 +113,12 @@ class Affordances:
                     sel_keys.append(sample_keys[sk[s]])
                     fts = self.inputs[sample_keys[sk[s]]]
                     input_list.append(fts.reshape((1024,14,14)).transpose())
-                    output_list.append(self.output_scale.transform(np.array([aff_data[sample_keys[sk[s]]][-1]])[:,:self.dim_output].reshape(1,-1)).squeeze() + tf)
+                    output_list.append(self.output_scale.transform(np.array([aff_data[sample_keys[sk[s]]][-1][:self.dim_output]]).reshape(1,-1)).squeeze() + tf)
                     #output_list.append([k[n]])
             tmp_scale = preprocessing.MinMaxScaler(feature_range=(-1,1))
             init_inputs[t] = np.stack(input_list)
-            outputs[t] = tmp_scale.fit_transform(np.stack(output_list)[:,:self.dim_output])
-            #outputs[t] = np.stack(output_list)
+            #outputs[t] = tmp_scale.fit_transform(np.stack(output_list)[:,:self.dim_output])
+            outputs[t] = np.stack(output_list)
             selected_keys.append(sel_keys)
         return init_inputs, outputs, selected_keys
 

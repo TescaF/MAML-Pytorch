@@ -57,6 +57,16 @@ class Meta(nn.Module):
         self.loss_fn = loss_fn
         self.accs_fn = accs_fn
 
+    def wrap_mse_loss(self, logits, y):
+        a = torch.cuda.FloatTensor([2,0])
+        l = torch.cuda.FloatTensor([0])
+        for i in range(logits.shape[0]):
+            l1 = F.mse_loss(logits[i], y[i])
+            l2 = F.mse_loss(logits[i] + a, y[i])
+            l3 = F.mse_loss(logits[i] - a, y[i])
+            l += torch.min(torch.stack([l1,l2,l3]))
+        return l/logits.shape[0]
+
     def forward(self, x_spt, y_spt, x_qry, y_qry,print_flag=False):
         task_num = x_spt.size(0)
         losses_q, losses_s = 0, 0
@@ -116,6 +126,10 @@ class Meta(nn.Module):
         #hook1 = self.net(x_spt[0],hook=2)
         self.meta_optim.zero_grad()
         total_loss.backward()
+        p = self.net.parameters()
+        max_grad = 0
+        for p in list(self.net.parameters()):
+            max_grad = max(max_grad, p.grad.data.norm(2).item())
         self.meta_optim.step()
         #hook2 = self.net(x_spt[0],hook=2)
         loss = total_loss.item()
@@ -125,7 +139,7 @@ class Meta(nn.Module):
         #    accs = np.array(corrects) / (x_qry.shape[1] * task_num)
         #else:
         accs = np.array(corrects) / task_num
-        return accs, loss, np.array(train_corrects)/task_num
+        return accs, loss, np.array(train_corrects)/task_num, max_grad
 
     def finetuning(self, x_spt, y_spt, x_qry, y_qry, debug=False):
         querysz = x_qry.size(0)
@@ -165,7 +179,7 @@ class Meta(nn.Module):
                     correct = self.accs_fn(pred_q, y_qry).sum().item()/querysz  # convert to numpy
                     del pred_q
                 corrects[k + 1] = corrects[k + 1] + correct
-            cam_vals = self.net(x_spt,vars=fast_weights,bn_training=True,hook=4,debug=debug)
+            cam_vals = self.net(x_spt,vars=fast_weights,bn_training=True,hook=2,debug=debug)
 
         del net
         accs = np.array(corrects) 

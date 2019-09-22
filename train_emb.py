@@ -36,7 +36,7 @@ def main():
     #logger = SummaryWriter()
     print(args)
 
-    polar = False
+    polar = True
     dim_output = 2
     sample_size = args.sample_size # number of images per object
 
@@ -63,11 +63,8 @@ def main():
     print(str(db_train.dim_input) + "-D input")
     dim = db_train.dim_input
     config = [
-        ('linear', [512,dim,True]),
-        ('relu', [True]),
-        ('linear', [1,512,True]),
-        ('relu', [True]),
-        #('leakyrelu', [0.01,True]),
+        ('linear', [1,dim,True]),
+        ('leakyrelu', [0.01,True]),
         ('reshape',[196]),
         ('linear', [196,196,True]),
         ('relu', [True]),
@@ -77,7 +74,8 @@ def main():
 
     #device = torch.device('cpu')
     device = torch.device('cuda')
-    maml = Meta(args, config, F.mse_loss, None).to(device)
+    maml = Meta(args, config, None, None).to(device)
+    maml.loss_fn = maml.wrap_mse_loss
 
     tmp = filter(lambda x: x.requires_grad, maml.parameters())
     num = sum(map(lambda x: np.prod(x.shape), tmp))
@@ -86,6 +84,7 @@ def main():
 
     losses,training = [],[]
     k_spt = args.k_spt * sample_size
+    max_grad = 0
     for epoch in range(args.epoch):
         batch_x, batch_y,_ = db_train.next()
         x_spt = batch_x[:,:k_spt,:]
@@ -95,14 +94,17 @@ def main():
         x_spt, y_spt, x_qry, y_qry = torch.from_numpy(x_spt).float().to(device), torch.from_numpy(y_spt).float().to(device), \
                                      torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device)
 
-        acc, loss, train_acc = maml(x_spt, y_spt, x_qry, y_qry)
+        acc, loss, train_acc, grad = maml(x_spt, y_spt, x_qry, y_qry)
         losses.append(acc)
         training.append(train_acc)
+        max_grad = max(max_grad, grad)
 
         if epoch % 30 == 0:
             print('step:', epoch, '\ttesting  loss:', np.array(losses).mean(axis=0))
             print('step:', epoch, '\ttraining loss:', np.array(training).mean(axis=0))
+            print('max grad: ' + str(max_grad))
             losses,training = [],[]
+            max_grad = 0
 
         if epoch % 500 == 0:  # evaluation
             
@@ -133,8 +135,8 @@ def main():
                         height, width, _ = img.shape
                         heatmap = cv.applyColorMap(cv.resize(cam,(width, height)), cv.COLORMAP_JET)
                         result = heatmap * 0.3 + img * 0.5
-                        #pos = db_train.output_scale.inverse_transform(y_spt_one[i].cpu().numpy().reshape(1,-1)).squeeze()
-                        #cv.circle(result,(pos[1],pos[0]),5,[255,255,0])
+                        pos = db_train.output_scale.inverse_transform(y_spt_one[i].cpu().numpy().reshape(1,-1)).squeeze()
+                        cv.circle(result,(pos[1],pos[0]),5,[255,255,0])
                         cv.imwrite('data/cam/' + name + '_CAM.jpg', result)
 
             
