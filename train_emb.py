@@ -79,15 +79,17 @@ def main():
                        k_qry=args.k_qry,
                        dim_out=dim_output)
 
-    '''db_test = Affordances(
+    db_test = Affordances(
+                       mode=mode,
                        train=False,
                        batchsz=args.task_num,
                        exclude=args.exclude,
-                       samples=5,
+                       samples=sample_size,
                        k_shot=args.k_spt,
                        k_qry=args.k_qry,
-                       dim_out=dim_output)'''
+                       dim_out=dim_output)
 
+    db_test.output_scale = db_train.output_scale
     save_path = os.getcwd() + '/data/models/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_exclude' + str(args.exclude) + '_epoch'
     print(str(db_train.dim_input) + "-D input")
     dim = db_train.dim_input
@@ -143,9 +145,9 @@ def main():
             losses,training = [],[]
             max_grad = 0
 
-        if epoch % 500 == 0:  # evaluation
-            
-            batch_x,batch_y,names = db_train.next()
+        if epoch % 1000 == 0:  # evaluation
+            test_losses = []
+            batch_x,batch_y,names = db_test.next()
             x_spt = batch_x[:,:k_spt,:]
             y_spt = batch_y[:,:k_spt,:]
             x_qry = batch_x[:,k_spt:,:]
@@ -157,6 +159,7 @@ def main():
                 n_spt = names_one[:k_spt]
                 n_qry = names_one[k_spt:]
                 loss,w,res = maml.finetuning(x_spt_one,y_spt_one,x_qry_one,y_qry_one)
+                test_losses.append(loss)
                 for i in range(x_spt_one.shape[0]):
                     name = n_spt[i]
                     cam1 = get_CAM(w[0][i])
@@ -199,6 +202,8 @@ def main():
                         cv.imwrite('data/cam/' + name + '_CAM_2.jpg', result2)
 
             torch.save(maml.state_dict(), save_path + str(epoch%2000) + "_al.pt")
+            print('Test Loss:', np.array(test_losses).mean(axis=0))
+            
 
 
 if __name__ == '__main__':

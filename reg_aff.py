@@ -24,6 +24,7 @@ class Affordances:
         :param k_qry:
         :param imgsz:
         """
+        self.train = train
         self.rand = RandomState(222)
         self.affs = []
         self.sample_size = samples
@@ -75,7 +76,7 @@ class Affordances:
         self.dim_input = len(list(self.inputs.values())[0])
         self.output_scale = preprocessing.MinMaxScaler(feature_range=(-1,1))
         self.output_scale.fit(np.concatenate(all_vals))
-
+        self.center = np.array([240,320])
         all_objs = list(set([k.split("_00")[0] for k in self.valid_keys]))
         self.categories = list(sorted(set([k1.split("_")[0] for k1 in all_objs if sum([o.startswith(k1.split("_")[0]) for o in all_objs]) >= self.num_samples_per_class])))
         print(self.categories)
@@ -93,7 +94,7 @@ class Affordances:
             aff_num = self.rand.choice(len(valid_affs))
             valid_keys, aff_data = self.affs[valid_affs[aff_num]]
             obj_keys = list(set([k.split("_00")[0] for k in valid_keys if k.startswith(cat)]))
-            tf_a = self.rand.uniform(-np.pi/8.0,np.pi/8.0)
+            tf_a = self.rand.uniform(-np.pi/4.0,np.pi/4.0)
             tf_r = self.rand.uniform(-0.25,0.25)
             k = self.rand.choice(len(obj_keys), self.num_samples_per_class, replace=False)
             for n in range(self.num_samples_per_class):
@@ -103,12 +104,19 @@ class Affordances:
                     sel_keys.append(sample_keys[sk[s]])
                     fts = self.inputs[sample_keys[sk[s]]]
                     input_list.append(fts.reshape((1024,14,14)).transpose())
-                    out = self.output_scale.transform(np.array([aff_data[sample_keys[sk[s]]][-1][:self.dim_output]]).reshape(1,-1)).squeeze()
-                    tf_out_x = ((out[0] + tf_r) * math.cos(tf_a)) - (out[1] * math.sin(tf_a))
-                    tf_out_y = ((out[0] + tf_r) * math.sin(tf_a)) + (out[1] * math.cos(tf_a))
+                    pt1 = np.array(aff_data[sample_keys[sk[s]]][-1][:self.dim_output])
+                    pt = pt1 - self.center
+                    r1 = np.sqrt(pt[0]**2 + pt[1]**2)
+                    r = r1 * (1+tf_r)
+                    a = math.atan2(pt[1],pt[0]) + tf_a
+                    tf_out_x = self.center[0] + (r * math.cos(a))
+                    tf_out_y = self.center[1] + (r * math.sin(a))
+                    out = self.output_scale.transform(np.array([tf_out_x,tf_out_y]).reshape(1,-1)).squeeze()
+                    #if not self.train:
+                    #    pdb.set_trace()
+                    #out = self.output_scale.transform(np.array([aff_data[sample_keys[sk[s]]][-1][:self.dim_output]]).reshape(1,-1)).squeeze()
                     output_list.append(out)
                     #output_list.append([tf_out_x,tf_out_y])
-            tmp_scale = preprocessing.MinMaxScaler(feature_range=(-1,1))
             init_inputs[t] = np.stack(input_list)
             #outputs[t] = tmp_scale.fit_transform(np.stack(output_list)[:,:self.dim_output])
             outputs[t] = np.stack(output_list)

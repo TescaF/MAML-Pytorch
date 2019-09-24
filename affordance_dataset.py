@@ -100,11 +100,13 @@ class ImageProc:
                         i = np.argmax(np.array(dists)) #dists.index(max(dists))
                         cy, cx = disp_pts[i]
                     else:
-                        dists = [math.sqrt((grasp[1]-p[1])**2 + (grasp[0]-p[0])**2) for p in disp_pts]
-                        i = np.argmax(np.array(dists)) #dists.index(max(dists))
-                        cy, cx = disp_pts[i]
+                        #dists = [math.sqrt((grasp[1]-p[1])**2 + (grasp[0]-p[0])**2) for p in disp_pts]
+                        #i = np.argmax(np.array(dists)) #dists.index(max(dists))
+                        cy, cx = [int(x) for x in np.median(disp_pts,axis=0)]
+                        #cy, cx = disp_pts[i]
                     cz = depth_tf[cy,cx]
                     aff_data.append([cy,cx,cz])
+                    #print(aff_data[-1])
                     #plt.imshow(cv.cvtColor(img_tf, cv.COLOR_BGR2RGB))
                     #plt.scatter([aff_data[-1][1]],[aff_data[-1][0]])
                     #plt.show()
