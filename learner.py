@@ -1,3 +1,4 @@
+import math
 import pdb
 import  torch
 from    torch import nn
@@ -55,6 +56,9 @@ class Learner(nn.Module):
                 # [ch_out]
                 self.vars.append(nn.Parameter(torch.zeros(param[0])))
 
+            elif name is 'polar':
+                self.init_polar_map(param[0])
+
             elif name is 'linear':
                 # [ch_out, ch_in]
                 w = nn.Parameter(torch.ones(*param[:2]))
@@ -78,15 +82,43 @@ class Learner(nn.Module):
 
 
             elif name in ['tanh', 'relu', 'upsample', 'avg_pool2d', 'max_pool2d',
-                          'flatten', 'reshape', 'leakyrelu', 'sigmoid','softmax']:
+                          'flatten', 'reshape', 'leakyrelu', 'sigmoid','softmax','polar']:
                 continue
             else:
                 raise NotImplementedError
 
 
+    def init_polar_map(self, dim):
+        urange = torch.linspace(0, np.log(dim), dim)
+        vrange = torch.linspace(0, 2*np.pi, dim)
+        vs, us = torch.meshgrid([vrange, urange])
+        rs = torch.exp(us)
+        xs = rs * torch.cos(vs)
+        ys = rs * torch.sin(vs)
+        self.polar_map = torch.clamp(torch.stack([xs,ys],2).floor(), -int(dim/2), int(dim/2)-1).int()
 
+    def apply_polar_tf2(self, x):
+        d = int(x.shape[-1]/2)
+        mat = torch.zeros_like(x)
+        for i in range(x.shape[-2]):
+            for j in range(x.shape[-1]):
+                sx,sy = self.polar_map[i,j]
+                mat[:,i,j] = x[:,sx+d,sy+d]
+        return mat
 
-
+    def apply_polar_tf(self, x):
+        d = int(x.shape[-1]/2)
+        tf = torch.zeros_like(x).cuda()
+        for i in range(x.shape[-2]):
+            for j in range(x.shape[-1]):
+                dist = np.sqrt((i-d)**2 + (j-d)**2)
+                if dist == 0:
+                    continue
+                r = int(np.floor(np.sqrt((i-d)**2 + (j-d)**2)))
+                #r = int(np.floor(x.shape[-1] * np.log(np.sqrt((i-d)**2 + (j-d)**2)) / np.log(x.shape[-1])))
+                a = int(np.floor((x.shape[-1] / (2 * np.pi)) * (math.atan2(i-d,j-d)))%x.shape[-1])
+                tf[:,r,a] = x[:,j,i]
+        return tf
 
     def extra_repr(self):
         info = ''
@@ -121,7 +153,7 @@ class Learner(nn.Module):
             elif name is 'max_pool2d':
                 tmp = 'max_pool2d:(k:%d, stride:%d, padding:%d)'%(param[0], param[1], param[2])
                 info += tmp + '\n'
-            elif name in ['flatten', 'tanh', 'relu', 'upsample', 'reshape', 'softmax','sigmoid', 'use_logits', 'bn']:
+            elif name in ['polar','flatten', 'tanh', 'relu', 'upsample', 'reshape', 'softmax','sigmoid', 'use_logits', 'bn']:
                 tmp = name + ':' + str(tuple(param))
                 info += tmp + '\n'
             else:
@@ -181,6 +213,8 @@ class Learner(nn.Module):
                 x = torch.mul(x, w)
                 idx += 2
                 # print('forward:', idx, x.norm().item())
+            elif name is 'polar':
+                x = self.apply_polar_tf(x)
             elif name is 'linear':
                 w, b = vars[idx], vars[idx + 1]
                 if param[2]:

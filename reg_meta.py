@@ -57,6 +57,13 @@ class Meta(nn.Module):
         self.loss_fn = loss_fn
         self.accs_fn = accs_fn
 
+    def polar_loss(self, logits, y):
+        dim = 14
+        sx = logits[:,1]*(0.5*np.sqrt(2*(dim**2))/dim) * torch.cos(2*np.pi*logits[:,0]/dim)
+        sy = logits[:,1]*(0.5*np.sqrt(2*(dim**2))/dim) * torch.sin(2*np.pi*logits[:,0]/dim)
+        l = F.mse_loss(torch.stack([sx,sy],1), y)
+        return l
+
     def wrap_mse_loss(self, logits, y):
         a = torch.cuda.FloatTensor([2,0])
         l = torch.cuda.FloatTensor([0])
@@ -126,6 +133,7 @@ class Meta(nn.Module):
         #hook1 = self.net(x_spt[0],hook=2)
         self.meta_optim.zero_grad()
         total_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.net.parameters(), 2)
         p = self.net.parameters()
         max_grad = 0
         for p in list(self.net.parameters()):
@@ -179,11 +187,12 @@ class Meta(nn.Module):
                     correct = self.accs_fn(pred_q, y_qry).sum().item()/querysz  # convert to numpy
                     del pred_q
                 corrects[k + 1] = corrects[k + 1] + correct
-            cam_vals = self.net(x_spt,vars=fast_weights,bn_training=True,hook=2,debug=debug)
+            cam_vals1 = self.net(x_spt,vars=fast_weights,bn_training=True,hook=3,debug=debug)
+            cam_vals2 = self.net(x_spt,vars=fast_weights,bn_training=True,hook=5,debug=debug)
 
         del net
         accs = np.array(corrects) 
-        return accs,cam_vals, logits_q
+        return accs,[cam_vals1,cam_vals2], logits_q
 
 def main():
     pass

@@ -17,7 +17,7 @@ from numpy.random import RandomState
 
 
 class Affordances:
-    def __init__(self, polar, train, exclude, samples, batchsz, k_shot, k_qry, dim_out):
+    def __init__(self, mode, train, exclude, samples, batchsz, k_shot, k_qry, dim_out):
         """
         :param batchsz: task num
         :param k_shot: number of samples for fine-tuning
@@ -28,11 +28,7 @@ class Affordances:
         self.affs = []
         self.sample_size = samples
         self.base_loc = "/home/tesca/data/part-affordance-dataset/tools/"
-        if polar:
-            prefix = "polar"
-        else:
-            prefix = "cart"
-        fts_loc = "/home/tesca/data/part-affordance-dataset/features/" + prefix + "_resnet_pool_fts-14D.pkl"
+        fts_loc = "/home/tesca/data/part-affordance-dataset/features/" + mode + "_resnet_pool_fts-14D.pkl"
         #fts_loc = "/home/tesca/data/part-affordance-dataset/features/resnet_fts.pkl"
         #fts_loc = "/home/tesca/data/part-affordance-dataset/features/resnet_polar_fts.pkl"
         with open(fts_loc, 'rb') as handle:
@@ -47,16 +43,9 @@ class Affordances:
 
         self.valid_keys, training_keys, all_vals = [],[],[]
         for aff in range(2,7):
-            aff_loc_cart = "/home/tesca/data/part-affordance-dataset/features/cart_aff_" + str(aff) + "_positions.pkl"
-            aff_loc_polar = "/home/tesca/data/part-affordance-dataset/features/polar_aff_" + str(aff) + "_positions.pkl"
-            with open(aff_loc_cart, 'rb') as handle:
-                aff_data_cart = pickle.load(handle)      #dict(category) = [img1, img2, ...]
-            with open(aff_loc_polar, 'rb') as handle:
-                aff_data_polar = pickle.load(handle)      #dict(category) = [img1, img2, ...]
-            if polar:
-                aff_data = aff_data_polar
-            else:
-                aff_data = aff_data_cart
+            aff_loc = "/home/tesca/data/part-affordance-dataset/features/" + mode + "_aff_" + str(aff) + "_positions.pkl"
+            with open(aff_loc, 'rb') as handle:
+                aff_data = pickle.load(handle)      #dict(category) = [img1, img2, ...]
 
             keys = list(sorted(aff_data.keys()))
             if exclude >= 0:
@@ -104,7 +93,8 @@ class Affordances:
             aff_num = self.rand.choice(len(valid_affs))
             valid_keys, aff_data = self.affs[valid_affs[aff_num]]
             obj_keys = list(set([k.split("_00")[0] for k in valid_keys if k.startswith(cat)]))
-            tf = self.rand.uniform(-0.50,0.50,self.dim_output)
+            tf_a = self.rand.uniform(-np.pi/8.0,np.pi/8.0)
+            tf_r = self.rand.uniform(-0.25,0.25)
             k = self.rand.choice(len(obj_keys), self.num_samples_per_class, replace=False)
             for n in range(self.num_samples_per_class):
                 sample_keys = list([key for key in valid_keys if key.startswith(obj_keys[k[n]])])
@@ -113,8 +103,11 @@ class Affordances:
                     sel_keys.append(sample_keys[sk[s]])
                     fts = self.inputs[sample_keys[sk[s]]]
                     input_list.append(fts.reshape((1024,14,14)).transpose())
-                    output_list.append(self.output_scale.transform(np.array([aff_data[sample_keys[sk[s]]][-1][:self.dim_output]]).reshape(1,-1)).squeeze() + tf)
-                    #output_list.append([k[n]])
+                    out = self.output_scale.transform(np.array([aff_data[sample_keys[sk[s]]][-1][:self.dim_output]]).reshape(1,-1)).squeeze()
+                    tf_out_x = ((out[0] + tf_r) * math.cos(tf_a)) - (out[1] * math.sin(tf_a))
+                    tf_out_y = ((out[0] + tf_r) * math.sin(tf_a)) + (out[1] * math.cos(tf_a))
+                    output_list.append(out)
+                    #output_list.append([tf_out_x,tf_out_y])
             tmp_scale = preprocessing.MinMaxScaler(feature_range=(-1,1))
             init_inputs[t] = np.stack(input_list)
             #outputs[t] = tmp_scale.fit_transform(np.stack(output_list)[:,:self.dim_output])

@@ -26,6 +26,35 @@ def get_CAM(cam):
     cam_img = np.uint8(255 * cam_img.cpu().detach().numpy())
     return cam_img
 
+def img_polar_tf(img):
+    dim = img.shape[0]
+    d = int(dim/2)
+    urange = np.linspace(0, 0.5 * np.sqrt(2*(dim**2)), dim)
+    #urange = np.linspace(0, np.log(dim), dim)
+    vrange = np.linspace(0, 2*np.pi, dim)
+    vs, us = np.meshgrid(vrange, urange)
+    rs = us
+    #rs = np.exp(us)
+    xs = rs * np.cos(vs)
+    ys = rs * np.sin(vs)
+    polar_map = np.clip(np.floor(np.stack([xs,ys],2)), -int(dim/2), int(dim/2)-1)
+    tf_img = np.zeros_like(img)
+    for i in range(img.shape[0]):
+        for j in range(img.shape[1]):
+            sx,sy = polar_map[i,j]
+            tf_img[i,j] = img[int(sx)+d,int(sy)+d]
+    return tf_img, polar_map
+
+def cart_to_polar(pos, polar_map):
+    dist = np.inf
+    for i in range(polar_map.shape[0]):
+        for j in range(polar_map.shape[1]):
+            c = polar_map[i,j]
+            d = ((pos[0]-c[0])**2) + ((pos[1]-c[1])**2)
+            if d < dist:
+                dist = d
+                pt = [i,j]
+    return pt
 
 def main():
 
@@ -36,12 +65,12 @@ def main():
     #logger = SummaryWriter()
     print(args)
 
-    polar = True
+    mode = "center"
     dim_output = 2
     sample_size = args.sample_size # number of images per object
 
     db_train = Affordances(
-                       polar=polar,
+                       mode=mode,
                        train=True,
                        batchsz=args.task_num,
                        exclude=args.exclude,
@@ -65,6 +94,8 @@ def main():
     config = [
         ('linear', [1,dim,True]),
         ('leakyrelu', [0.01,True]),
+        ('reshape',[14,14]),
+        ('polar',[14,14]),
         ('reshape',[196]),
         ('linear', [196,196,True]),
         ('relu', [True]),
@@ -74,8 +105,14 @@ def main():
 
     #device = torch.device('cpu')
     device = torch.device('cuda')
-    maml = Meta(args, config, None, None).to(device)
-    maml.loss_fn = maml.wrap_mse_loss
+    if mode == "polar":
+        maml = Meta(args, config, None, None).to(device)
+        maml.loss_fn = maml.wrap_mse_loss
+    elif mode == "center":
+        maml = Meta(args, config, None, None).to(device)
+        maml.loss_fn = maml.polar_loss
+    else:
+        maml = Meta(args, config, F.mse_loss, None).to(device)
 
     tmp = filter(lambda x: x.requires_grad, maml.parameters())
     num = sum(map(lambda x: np.prod(x.shape), tmp))
@@ -122,44 +159,47 @@ def main():
                 loss,w,res = maml.finetuning(x_spt_one,y_spt_one,x_qry_one,y_qry_one)
                 for i in range(x_spt_one.shape[0]):
                     name = n_spt[i]
-                    cam = get_CAM(w[i])
+                    cam1 = get_CAM(w[0][i])
+                    cam2 = get_CAM(w[1][i])
                     pref = name.split("_00")[0]
-                    if polar:
+                    pos = db_train.output_scale.inverse_transform(y_spt_one[i].cpu().numpy().reshape(1,-1)).squeeze()
+                    if mode == "polar":
                         try:
                             img = cv.imread('/home/tesca/data/part-affordance-dataset/polar_tools/' + name + '_polar.jpg')
                         except:
                             img = None
+                    elif mode == "center":
+                        img = cv.imread('/home/tesca/data/part-affordance-dataset/center_tools/' + name + '_center.jpg')
+                        # Scale target point to position in 224x224 img
+                        mult = [(pos[0] * 224/img.shape[0])-112, (pos[1] * 224/img.shape[1])-112]
+                        r = 224*np.sqrt(mult[0]**2 + mult[1]**2)/(0.5*np.sqrt(2*(224**2)))
+                        a = (224/(2*np.pi)) * math.atan2(mult[1],mult[0]) % 224
+                        tf_pos = [r,a]
+                        tf_img,polar_map = img_polar_tf(cv.resize(img, (224,224)))
+                        '''inv_x = r*(0.5*np.sqrt(2*(224**2))/224) * math.cos(2*np.pi*a/224)
+                        inv_y = r*(0.5*np.sqrt(2*(224**2))/224) * math.sin(2*np.pi*a/224)
+                        #inv_y = np.exp(r*np.log(224)/224) * math.sin(2*np.pi*a/224)
+                        pdb.set_trace()
+                        print(tf_pos)
+                        cv.circle(tf_img,(int(tf_pos[1]),int(tf_pos[0])),5,[255,255,0])
+                        cv.imshow("im", tf_img)
+                        cv.waitKey(0)'''
                     else:
                         img = cv.imread('/home/tesca/data/part-affordance-dataset/tools/' + pref + '/' + name + '_rgb.jpg')
                     if img is not None:
                         height, width, _ = img.shape
-                        heatmap = cv.applyColorMap(cv.resize(cam,(width, height)), cv.COLORMAP_JET)
-                        result = heatmap * 0.3 + img * 0.5
-                        pos = db_train.output_scale.inverse_transform(y_spt_one[i].cpu().numpy().reshape(1,-1)).squeeze()
-                        cv.circle(result,(pos[1],pos[0]),5,[255,255,0])
-                        cv.imwrite('data/cam/' + name + '_CAM.jpg', result)
+                        heatmap1 = cv.applyColorMap(cv.resize(cam1,(width, height)), cv.COLORMAP_JET)
+                        result1 = heatmap1 * 0.3 + img * 0.5
+                        cv.circle(result1,(int(pos[1]),int(pos[0])),5,[255,255,0])
+                        cv.imwrite('data/cam/' + name + '_CAM_1.jpg', result1)
+                        height, width, _ = tf_img.shape
+                        heatmap2 = cv.applyColorMap(cv.resize(cam2,(width, height)), cv.COLORMAP_JET)
+                        result2 = heatmap2 * 0.3 + tf_img * 0.5
+                        cv.circle(result2,(int(tf_pos[1]),int(tf_pos[0])),5,[255,255,0])
+                        cv.imwrite('data/cam/' + name + '_CAM_2.jpg', result2)
 
-            
-            '''test_losses = []
-
-
-            # [b, update_step+1]
-            loss = np.array(test_losses).mean()
-            print('Test loss:', loss)'''
             torch.save(maml.state_dict(), save_path + str(epoch%2000) + "_al.pt")
 
-        '''if epoch % 20000 == 0:  # evaluation
-            cam = torch.mm(maml.net.parameters()[0][class_num].unsqueeze(0), embedding.reshape((2048,49)))
-            outs = cam.reshape((7,7))
-            outs = outs - torch.min(outs)
-            outs = outs / torch.max(outs)
-            outs = np.uint8(outs.cpu().detach().numpy() * 255)
-            layer = cv.resize(outs, (640,480))
-            heatmap = cv.applyColorMap(layer, cv.COLORMAP_JET)
-            cv.addWeighted(heatmap, 0.3, polar_img, 0.7, 0, heatmap)
-            cv.imshow("im", heatmap)
-            cv.waitKey()
-            cv.destroyAllWindows()'''
 
 if __name__ == '__main__':
 
