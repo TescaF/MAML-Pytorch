@@ -24,7 +24,7 @@ class ImageProc:
     def __init__(self):
         self.base_dir = "/home/tesca/data/part-affordance-dataset/"
 
-    def get_img_tf(self, img, data, mode):
+    '''def get_img_tf(self, img, data, mode):
         # Get centerpoint
         grasp_pts = [(i,j) for i in range(data.shape[0]) for j in range(data.shape[1]) if data[i,j] == 1]
         if len(grasp_pts) == 0:
@@ -47,18 +47,18 @@ class ImageProc:
             img_tf = cv.linearPolar(img, (cx,cy), value, cv.WARP_FILL_OUTLIERS)
         else:
             img_tf = img
-        return img_tf
+        return img_tf'''
 
     def get_img_data(self, img, depth, data, mode):
         if mode == "polar" or mode == "center":
             # Get centerpoint
             grasp_pts = [(i,j) for i in range(data.shape[0]) for j in range(data.shape[1]) if data[i,j] == 1]
             if len(grasp_pts) == 0:
-                return None,None
+                return None,None,None
             clusters = sklearn.cluster.DBSCAN(eps=3, min_samples=20).fit_predict(grasp_pts)
             disp_pts = [grasp_pts[i] for i in range(len(grasp_pts)) if clusters[i] > -1]
             if len(disp_pts) == 0:
-                return None,None
+                return None,None,None
             cy, cx = [int(x) for x in np.median(disp_pts,axis=0)]
             #plt.imshow(cv.cvtColor(img, cv.COLOR_BGR2RGB))
             #plt.scatter([cx],[cy])
@@ -110,7 +110,7 @@ class ImageProc:
                     #plt.imshow(cv.cvtColor(img_tf, cv.COLOR_BGR2RGB))
                     #plt.scatter([aff_data[-1][1]],[aff_data[-1][0]])
                     #plt.show()
-        return aff_data, feats
+        return img_tf, aff_data, feats
         
     def save_features(self, mode):
         depths, labels, images = [], [], []
@@ -134,13 +134,13 @@ class ImageProc:
                     labels.append([o.split("_label")[0],label])
                     depths.append(cv.imread(self.base_dir + "tools/" + d + '/' + o.split("label")[0] + 'depth.png',-1))
                     images.append(cv.imread(self.base_dir + "tools/" + d + '/' + o.split("label")[0] + 'rgb.jpg',-1))
-                    img_tf = self.get_img_tf(images[-1], labels[-1][1], mode)
+                    #img_tf = self.get_img_tf(images[-1], labels[-1][1], mode)
+                    img_tf, aff_data, feats = self.get_img_data(images[-1], depths[-1], labels[-1][1], mode)
                     if mode=="polar" and (img_tf is not None):
                         cv.imwrite(self.base_dir + 'polar_tools/' + o.split("_label")[0] + '_polar.jpg', img_tf)
                     if mode=="center" and (img_tf is not None):
                         cv.imwrite(self.base_dir + 'center_tools/' + o.split("_label")[0] + '_center.jpg', img_tf)
 
-                    aff_data, feats = self.get_img_data(images[-1], depths[-1], labels[-1][1], mode)
                     if aff_data is not None:
                         features[labels[-1][0]] = feats
                         for a in range(2,7):

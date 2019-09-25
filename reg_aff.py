@@ -77,7 +77,7 @@ class Affordances:
         self.output_scale = preprocessing.MinMaxScaler(feature_range=(-1,1))
         self.output_scale.fit(np.concatenate(all_vals))
         self.center = np.array([240,320])
-        all_objs = list(set([k.split("_00")[0] for k in self.valid_keys]))
+        all_objs = list(sorted(set([k.split("_00")[0] for k in self.valid_keys])))
         self.categories = list(sorted(set([k1.split("_")[0] for k1 in all_objs if sum([o.startswith(k1.split("_")[0]) for o in all_objs]) >= self.num_samples_per_class])))
         print(self.categories)
 
@@ -93,7 +93,7 @@ class Affordances:
             valid_affs = [a for a in range(len(self.affs)) if any([o.startswith(cat) for o in self.affs[a][0]])]
             aff_num = self.rand.choice(len(valid_affs))
             valid_keys, aff_data = self.affs[valid_affs[aff_num]]
-            obj_keys = list(set([k.split("_00")[0] for k in valid_keys if k.startswith(cat)]))
+            obj_keys = list(sorted(set([k.split("_00")[0] for k in valid_keys if k.startswith(cat)])))
             tf_a = self.rand.uniform(-np.pi/4.0,np.pi/4.0)
             tf_r = self.rand.uniform(-0.25,0.25)
             k = self.rand.choice(len(obj_keys), self.num_samples_per_class, replace=False)

@@ -56,9 +56,6 @@ class Learner(nn.Module):
                 # [ch_out]
                 self.vars.append(nn.Parameter(torch.zeros(param[0])))
 
-            elif name is 'polar':
-                self.init_polar_map(param[0])
-
             elif name is 'linear':
                 # [ch_out, ch_in]
                 w = nn.Parameter(torch.ones(*param[:2]))
@@ -88,37 +85,32 @@ class Learner(nn.Module):
                 raise NotImplementedError
 
 
-    def init_polar_map(self, dim):
-        urange = torch.linspace(0, np.log(dim), dim)
-        vrange = torch.linspace(0, 2*np.pi, dim)
-        vs, us = torch.meshgrid([vrange, urange])
-        rs = torch.exp(us)
-        xs = rs * torch.cos(vs)
-        ys = rs * torch.sin(vs)
-        self.polar_map = torch.clamp(torch.stack([xs,ys],2).floor(), -int(dim/2), int(dim/2)-1).int()
-
-    def apply_polar_tf2(self, x):
-        d = int(x.shape[-1]/2)
-        mat = torch.zeros_like(x)
-        for i in range(x.shape[-2]):
-            for j in range(x.shape[-1]):
-                sx,sy = self.polar_map[i,j]
-                mat[:,i,j] = x[:,sx+d,sy+d]
-        return mat
-
     def apply_polar_tf(self, x):
-        d = int(x.shape[-1]/2)
+        '''d = int(x.shape[-1]/2)
         tf = torch.zeros_like(x).cuda()
         for i in range(x.shape[-2]):
             for j in range(x.shape[-1]):
-                dist = np.sqrt((i-d)**2 + (j-d)**2)
+                dist = x.shape[-1] * np.sqrt((i-d)**2 + (j-d)**2) / (0.5*np.sqrt(2*(x.shape[-1]**2)))
                 if dist == 0:
                     continue
-                r = int(np.floor(np.sqrt((i-d)**2 + (j-d)**2)))
+                r = int(np.round(dist-np.sqrt(2)))
                 #r = int(np.floor(x.shape[-1] * np.log(np.sqrt((i-d)**2 + (j-d)**2)) / np.log(x.shape[-1])))
-                a = int(np.floor((x.shape[-1] / (2 * np.pi)) * (math.atan2(i-d,j-d)))%x.shape[-1])
-                tf[:,r,a] = x[:,j,i]
+                a = int(np.round((x.shape[-1] / (2 * np.pi)) * (math.atan2(j-d,i-d)))%x.shape[-1])
+                tf[:,r,a] = x[:,i,j]
+        return tf'''
+        d = int(x.shape[-1]/2)
+        w = int(x.shape[-1])
+        tf = torch.zeros_like(x).cuda()
+        for i in range(x.shape[-1]):
+            for j in range(x.shape[-2]):
+                r = j/2
+                a = 2*np.pi*i/w
+                sx = int(np.floor(r * np.cos(a))+d)
+                sy = int(np.floor(r * np.sin(a))+d)
+                if sx in range(w) and sy in range(w):
+                    tf[:,j,i] = x[:,sy,sx]
         return tf
+
 
     def extra_repr(self):
         info = ''
