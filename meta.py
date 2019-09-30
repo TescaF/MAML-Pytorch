@@ -1,0 +1,347 @@
+from scipy.stats import norm
+import math
+import itertools
+import pdb
+import  torch
+#from torch.utils.tensorboard import SummaryWriter
+from    torch import nn
+from    torch import optim
+from    torch.nn import functional as F
+from torch.distributions import Normal
+from    torch.utils.data import TensorDataset, DataLoader
+from    torch import optim
+import  numpy as np
+from    learner import Learner
+from    copy import deepcopy
+
+def debug_memory():
+    import collections, gc, resource, torch
+    print('maxrss = {}'.format(
+        resource.getrusage(resource.RUSAGE_SELF).ru_maxrss))
+    tensors = collections.Counter((str(o.device), o.dtype, tuple(o.shape))
+                                  for o in gc.get_objects()
+                                  if torch.is_tensor(o))
+    for line in tensors.items():
+        print('{}\t{}'.format(*line))
+    pdb.set_trace()
+
+def print_backward_stack(mod):
+    l = mod.grad_fn
+    while l is not None:
+        print(l)
+        if len(l.next_functions) == 0:
+            return
+        l = l.next_functions[0][0]
+
+
+class Meta(nn.Module):
+    """
+    Meta Learner
+    """
+    def __init__(self, args, config, out_dim, loss_fn=F.cross_entropy, accs_fn=torch.eq):
+        """
+
+        :param args:
+        """
+        super(Meta, self).__init__()
+
+        self.update_lr = args.update_lr
+        self.meta_lr = args.meta_lr
+        self.k_spt = args.k_spt
+        self.k_qry = args.k_qry
+        self.task_num = args.task_num
+        self.update_step = args.update_step
+        self.update_step_test = args.update_step_test
+        self.net = Learner(config)
+        self.meta_optim = optim.Adam(self.net.parameters(), lr=self.meta_lr)
+        self.loss_fn = loss_fn
+        self.accs_fn = accs_fn
+        self.output_dim = out_dim
+
+    def polar_loss(self, logits, y):
+        dim = 14
+        sx = logits[:,1]*(0.5*np.sqrt(2*(dim**2))/dim) * torch.cos(2*np.pi*logits[:,0]/dim)
+        sy = logits[:,1]*(0.5*np.sqrt(2*(dim**2))/dim) * torch.sin(2*np.pi*logits[:,0]/dim)
+        if self.output_dim >= 3:
+            out = [sx,sy,logits[:,2]]
+        else:
+            out = [sx,sy]
+        l = F.mse_loss(torch.stack(out,1), y)
+        return l
+
+    def avg_loss(self, logits, y):
+        r = int(math.sqrt(logits.shape[-1]))
+        c = float(r)/2.0
+        p = torch.stack(torch.meshgrid([torch.arange(r),torch.arange(r)]),-1).float().cuda()
+        pred = []
+        for i in range(logits.shape[0]):
+            s = F.softmax(logits[i],0).reshape(r,r)
+            pos = torch.mul(torch.stack([s,s],-1),p)
+            pred.append((torch.sum(pos.reshape((-1,2)),dim=0)-c)/c)
+        return F.mse_loss(torch.stack(pred),y)
+
+    def direct_update(self, x_spt, y_spt, x_qry, y_qry):
+        # Update
+        loss = 0
+        for i in range(x_spt.shape[0]):
+            logits = self.net(x_spt[i], None, bn_training=True)
+            loss += self.loss_fn(logits, y_spt[i])
+        total_loss = loss / x_spt.shape[0]
+        self.meta_optim.zero_grad()
+        total_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.net.parameters(), 1)
+        p = self.net.parameters()
+        max_grad = 0
+        for p in list(self.net.parameters()):
+            max_grad = max(max_grad, p.grad.data.norm(2).item())
+        self.meta_optim.step()
+
+        # Post-update training loss
+        loss = 0
+        cam_vals = []
+        for i in range(x_spt.shape[0]):
+            logits = self.net(x_spt[i], None, bn_training=True)
+            loss += self.loss_fn(logits, y_spt[i])
+            cam_vals.append(self.net(x_spt[i],None,bn_training=True,hook=3))
+        total_loss = loss / x_spt.shape[0]
+
+        # Post-update testing loss
+        test_loss = 0
+        for i in range(x_qry.shape[0]):
+            logits = self.net(x_qry[i], None, bn_training=True)
+            test_loss += self.loss_fn(logits, y_qry[i])
+        total_test_loss = test_loss / x_qry.shape[0]
+
+        return total_loss.item(), total_test_loss.item(), cam_vals, max_grad
+
+    def class_forward(self, n_spt, x_spt, y_spt, x_qry, y_qry,print_flag=False):
+        task_num = x_spt.size(0)
+        losses_q, losses_s = 0, 0
+        test_corrects = [0 for _ in range(self.update_step + 1)]
+        train_corrects = [0 for _ in range(self.update_step)]
+
+        for i in range(task_num):
+            s_weights = self.net.parameters()
+            with torch.no_grad():
+                logits_q = self.net(x_qry[i], vars=s_weights, bn_training=True, hook=7)
+                loss_q = self.avg_loss(logits_q, y_qry[i])
+                test_corrects[0] += loss_q.item()
+
+            ## Update model w.r.t. classification loss
+            for k in range(self.update_step):
+                logits_a = self.net(x_spt[i], vars=s_weights, bn_training=True)
+                logits_b = self.net(x_qry[i], vars=s_weights, bn_training=True)
+                logits_c = self.net(n_spt[i], vars=s_weights, bn_training=True)
+                lossa = F.cross_entropy(logits_a, torch.ones(x_spt.shape[1]).long().cuda())
+                lossb = F.cross_entropy(logits_b, torch.ones(x_qry.shape[1]).long().cuda())
+                lossc = F.cross_entropy(logits_c, torch.zeros(n_spt.shape[1]).long().cuda())
+                grad_a = list(torch.autograd.grad(lossa+lossb+lossc, s_weights,allow_unused=True))
+                for g in range(len(grad_a)):
+                    if grad_a[g] is None:
+                        pdb.set_trace()
+                        grad_a[g] = torch.zeros_like(s_weights[g])
+                s_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad_a, s_weights)))  
+                del lossa, lossb, grad_a, logits_a, logits_b
+
+            ## Update model w.r.t. location loss
+            for k in range(self.update_step):
+                logits_a = self.net(x_spt[i], vars=s_weights, bn_training=True, hook=7)
+                loss = self.avg_loss(logits_a, y_spt[i])
+                train_corrects[k] += loss.item()
+                grad_a = list(torch.autograd.grad(loss, s_weights[4:6],allow_unused=True))
+                for g in range(len(grad_a)):
+                    if grad_a[g] is None:
+                        grad_a[g] = torch.zeros_like(s_weights[g])
+                t = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad_a, s_weights[4:6])))
+                s_weights = s_weights[:4] + list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad_a, s_weights[4:6]))) + s_weights[6:]
+                with torch.no_grad():
+                    logits_q = self.net(x_qry[i], vars=s_weights, bn_training=True, hook=7)
+                    loss_q = self.avg_loss(logits_q, y_qry[i])
+                    test_corrects[k+1] += loss_q.item()
+                del loss, loss_q, grad_a, logits_a, logits_q
+
+            ## Get post-tuning losses for task and AL objectives
+            logits_q = self.net(x_qry[i], vars=s_weights, bn_training=True, hook=7)
+            losses_q += self.avg_loss(logits_q, y_qry[i])
+            del s_weights,logits_q
+            torch.cuda.empty_cache()
+
+        ## Get total losses after all tasks
+        total_loss =  losses_q / task_num #) + (losses_q/losses_s)
+        ## Optimize parameters
+        self.meta_optim.zero_grad()
+        total_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.net.parameters(), 1)
+        p = self.net.parameters()
+        max_grad = 0
+        for p in list(self.net.parameters())[:-2]:
+            max_grad = max(max_grad, p.grad.data.norm(2).item())
+        self.meta_optim.step()
+        loss = total_loss.item()
+        del total_loss, losses_q
+
+        accs = np.array(test_corrects) / task_num
+        return accs, loss, np.array(train_corrects)/task_num, max_grad
+
+    def forward(self, x_spt, y_spt, x_qry, y_qry,print_flag=False):
+        task_num = x_spt.size(0)
+        losses_q, losses_s = 0, 0
+        corrects = [0 for _ in range(self.update_step + 1)]
+        train_corrects = [0 for _ in range(self.update_step + 1)]
+
+        for i in range(task_num):
+            s_weights = self.net.parameters()
+            ## Get loss before first update
+            logits_q = self.net(x_qry[i], None, bn_training=True)
+            with torch.no_grad():
+                if self.accs_fn is None:
+                    correct = self.loss_fn(logits_q, y_qry[i]).item()
+                else:
+                    pred_q = F.softmax(logits_q, dim=1).argmax(dim=1)
+                    correct = self.accs_fn(pred_q, y_qry[i]).sum().item()  # convert to numpy
+                    del pred_q
+                corrects[0] = corrects[0] + correct
+
+            ## Update model w.r.t. task loss
+            for k in range(self.update_step):
+                logits_a = self.net(x_spt[i], vars=s_weights, bn_training=True)
+                loss = self.loss_fn(logits_a, y_spt[i])
+                train_corrects[k] = train_corrects[k] + loss.item()
+                grad_a = list(torch.autograd.grad(loss, s_weights,allow_unused=True))
+                for g in range(len(grad_a)):
+                    if grad_a[g] is None:
+                        pdb.set_trace()
+                        grad_a[g] = torch.zeros_like(s_weights[g])
+                s_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad_a, s_weights)))  
+                del loss, grad_a, logits_a
+
+                # Get accuracy after update
+                logits_q = self.net(x_qry[i], s_weights, bn_training=True)
+                with torch.no_grad():
+                    if self.accs_fn is None:
+                        correct = self.loss_fn(logits_q, y_qry[i]).item()
+                    else:
+                        pred_q = F.softmax(logits_q, dim=1).argmax(dim=1)
+                        correct = self.accs_fn(pred_q, y_qry[i]).sum().item()  # convert to numpy
+                        del pred_q
+                    corrects[k + 1] = corrects[k + 1] + correct
+
+            ## Get post-tuning losses for task and AL objectives
+            losses_q += self.loss_fn(logits_q, y_qry[i])
+            del s_weights,logits_q
+            torch.cuda.empty_cache()
+
+        ## Get total losses after all tasks
+        total_loss =  losses_q / task_num #) + (losses_q/losses_s)
+        ## Optimize parameters
+        self.meta_optim.zero_grad()
+        total_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.net.parameters(), 1)
+        p = self.net.parameters()
+        max_grad = 0
+        for p in list(self.net.parameters()):
+            max_grad = max(max_grad, p.grad.data.norm(2).item())
+        self.meta_optim.step()
+        loss = total_loss.item()
+        del total_loss, losses_q
+
+        accs = np.array(corrects) / task_num
+        return accs, loss, np.array(train_corrects)/task_num, max_grad
+
+    def class_finetuning(self, n_spt, x_spt, y_spt, x_qry, y_qry, debug=False):
+        querysz = x_qry.size(0)
+
+        corrects = [0 for _ in range(self.update_step_test + 1)]
+
+        net = deepcopy(self.net)
+        fast_weights = list(net.parameters())
+        with torch.no_grad():
+            logits_q = net(x_qry, vars=fast_weights, bn_training=True, hook=7)
+            loss_q = self.avg_loss(logits_q, y_qry)
+            corrects[0] += loss_q.item()
+        ## Update model w.r.t. classification loss
+        for k in range(self.update_step_test):
+            logits_a = net(x_spt, vars=fast_weights, bn_training=True)
+            logits_b = net(x_qry, vars=fast_weights, bn_training=True)
+            logits_c = net(n_spt, vars=fast_weights, bn_training=True)
+            lossa = F.cross_entropy(logits_a, torch.ones(x_spt.shape[0]).long().cuda())
+            lossb = F.cross_entropy(logits_b, torch.ones(x_qry.shape[0]).long().cuda())
+            lossc = F.cross_entropy(logits_c, torch.zeros(n_spt.shape[0]).long().cuda())
+            grad_a = list(torch.autograd.grad(lossa+lossb+lossc, fast_weights,allow_unused=True))
+            for g in range(len(grad_a)):
+                if grad_a[g] is None:
+                    pdb.set_trace()
+                    grad_a[g] = torch.zeros_like(s_weights[g])
+            fast_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad_a, fast_weights)))  
+            del lossa, lossb, grad_a, logits_a, logits_b
+
+        ## Update model w.r.t. location loss
+        for k in range(self.update_step_test):
+            logits_a = net(x_spt, vars=fast_weights, bn_training=True, hook=7)
+            loss = self.avg_loss(logits_a, y_spt)
+            grad_a = list(torch.autograd.grad(loss, fast_weights[4:6],allow_unused=True))
+            for g in range(len(grad_a)):
+                if grad_a[g] is None:
+                    grad_a[g] = torch.zeros_like(fast_weights[g])
+            t = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad_a, fast_weights[4:6])))
+            fast_weights = fast_weights[:4] + list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad_a, fast_weights[4:6]))) + fast_weights[6:]
+            with torch.no_grad():
+                logits_q = net(x_qry, vars=fast_weights, bn_training=True, hook=7)
+                loss_q = self.avg_loss(logits_q, y_qry)
+                corrects[k+1] += loss_q.item()
+        cam_vals1 = net(x_spt,vars=fast_weights,bn_training=True,hook=3,debug=debug)
+        del net,loss, loss_q, grad_a, logits_a
+
+        accs = np.array(corrects) 
+        return accs,[cam_vals1], logits_q
+
+    def finetuning(self, x_spt, y_spt, x_qry, y_qry, debug=False):
+        querysz = x_qry.size(0)
+
+        corrects = [0 for _ in range(self.update_step_test + 1)]
+
+        net = deepcopy(self.net)
+        fast_weights = list(net.parameters())
+
+        with torch.no_grad():
+            logits_q = net(x_qry, net.parameters(), bn_training=True)
+            if self.accs_fn is None:
+                correct = self.loss_fn(logits_q,y_qry).item()
+            else:
+                pred_q = F.softmax(logits_q, dim=1).argmax(dim=1)
+                correct = self.accs_fn(pred_q, y_qry).sum().item()/querysz
+            corrects[0] = corrects[0] + correct
+
+        ## Update model w.r.t. task loss
+        for k in range(self.update_step_test):
+            logits_a = self.net(x_spt, vars=fast_weights, bn_training=True)
+            loss = self.loss_fn(logits_a, y_spt)
+            grad_a = list(torch.autograd.grad(loss, fast_weights,allow_unused=True))
+            for g in range(len(grad_a)):
+                if grad_a[g] is None:
+                    grad_a[g] = torch.zeros_like(fast_weights[g])
+            fast_weights = list(map(lambda p: p[1] - (self.update_lr * p[0]), zip(grad_a, fast_weights)))
+            del loss, logits_a, grad_a
+
+            # Get accuracy after update
+            with torch.no_grad():
+                logits_q = self.net(x_qry, fast_weights, bn_training=True)
+                if self.accs_fn is None:
+                    correct = self.loss_fn(logits_q, y_qry).item()
+                else:
+                    pred_q = F.softmax(logits_q, dim=1).argmax(dim=1)
+                    correct = self.accs_fn(pred_q, y_qry).sum().item()/querysz  # convert to numpy
+                    del pred_q
+                corrects[k + 1] = corrects[k + 1] + correct
+        cam_vals1 = net(x_spt,vars=fast_weights,bn_training=True,hook=3,debug=debug)
+
+        del net
+        accs = np.array(corrects) 
+        return accs,[cam_vals1], logits_q
+
+def main():
+    pass
+
+
+if __name__ == '__main__':
+    main()

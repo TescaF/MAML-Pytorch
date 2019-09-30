@@ -7,18 +7,12 @@ import  numpy as np
 import  scipy.stats
 import  random, sys, pickle
 import  argparse
+from scipy.stats import norm
 import torch.nn.functional as F
-from reg_meta import Meta
-from reg_aff import Affordances
+from meta import Meta
+from aff_data import Affordances
 
 def get_CAM(cam):
-    '''img = np.zeros((640,480))
-    dims = [480,640]
-    tf_range = tf.transform(np.array([dims])) - tf.transform(np.array([[0,0]]))
-    for x in range(640):
-        for y in range(480):
-            src = np.round((w/tf_range.squeeze()) * tf.transform(np.array([[y,x]])).squeeze()).astype(int)
-            img[x,y] = cam[src[0],src[1]].item()'''
     cam = cam.reshape(14,14)
     cam = torch.abs(cam)
     cam = cam - torch.min(cam)
@@ -80,38 +74,34 @@ def main():
     dim = db_train.dim_input
     if polar:
         config = [
+            ('linear', [dim,dim,True]),
+            ('leakyrelu', [0.01, True]),
             ('linear', [1,dim,True]),
-            ('leakyrelu', [0.01,True]),
+            ('leakyrelu', [0.01, True]),
             ('reshape',[14,14]),
             ('polar',[14,14]),
             ('reshape',[196]),
             ('linear', [196,196,True]),
-            ('relu', [True]),
-            ('linear', [dim_output,196,True])
         ]
     else:
         config = [
+            ('linear', [dim,dim,True]),
+            ('leakyrelu', [0.01, True]),
             ('linear', [1,dim,True]),
-            ('leakyrelu', [0.01,True]),
+            ('leakyrelu', [0.01, True]),
             ('reshape',[196]),
             ('linear', [196,196,True]),
-            ('relu', [True]),
-            ('linear', [dim_output,196,True])
+            ('leakyrelu', [0.01, True]),
+            ('linear', [2,196,True])
         ]
 
-
-
-
-    #device = torch.device('cpu')
     device = torch.device('cuda')
-    if mode == "polar":
-        maml = Meta(args, config, None, None).to(device)
-        maml.loss_fn = maml.wrap_mse_loss
-    elif mode == "center":
-        maml = Meta(args, config, None, None).to(device)
+    if polar:
+        maml = Meta(args, config, dim_output, None, None).to(device)
         maml.loss_fn = maml.polar_loss
     else:
-        maml = Meta(args, config, F.mse_loss, None).to(device)
+        maml = Meta(args, config, dim_output, F.cross_entropy, torch.eq).to(device)
+        maml.loss_fn = maml.avg_loss
 
     tmp = filter(lambda x: x.requires_grad, maml.parameters())
     num = sum(map(lambda x: np.prod(x.shape), tmp))
@@ -122,18 +112,24 @@ def main():
     k_spt = args.k_spt * sample_size
     max_grad = 0
     for epoch in range(args.epoch):
-        batch_x, batch_y,_ = db_train.next()
+        batch_x, n_spt, batch_y,_,dist = db_train.next()
         x_spt = batch_x[:,:k_spt,:]
         y_spt = batch_y[:,:k_spt,:]
         x_qry = batch_x[:,k_spt:,:]
         y_qry = batch_y[:,k_spt:,:]
-        x_spt, y_spt, x_qry, y_qry = torch.from_numpy(x_spt).float().to(device), torch.from_numpy(y_spt).float().to(device), \
-                                     torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device)
+        x_spt, y_spt, x_qry, y_qry, n_spt = torch.from_numpy(x_spt).float().to(device), torch.from_numpy(y_spt).float().to(device), \
+                                     torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device), torch.from_numpy(n_spt).float().to(device)
 
-        acc, loss, train_acc, grad = maml(x_spt, y_spt, x_qry, y_qry)
-        losses.append(acc)
-        training.append(train_acc)
-        max_grad = max(max_grad, grad)
+        if args.meta == 1:
+            acc, loss, train_acc, grad = maml.class_forward(n_spt, x_spt, y_spt, x_qry, y_qry)
+            losses.append(acc)
+            training.append(train_acc)
+            max_grad = max(max_grad, grad)
+        else:
+            train_loss,test_loss,_,grad = maml.direct_update(x_spt, y_spt,x_qry,y_qry)
+            losses.append(test_loss)
+            training.append(train_loss)
+            max_grad = max(max_grad, grad)
 
         if epoch % 30 == 0:
             print('step:', epoch, '\ttesting  loss:', np.array(losses).mean(axis=0))
@@ -144,62 +140,55 @@ def main():
 
         if epoch % 1000 == 0:  # evaluation
             test_losses = []
-            batch_x,batch_y,names = db_test.next()
+            batch_x,n_spt,batch_y,names,dist = db_test.next()
             x_spt = batch_x[:,:k_spt,:]
             y_spt = batch_y[:,:k_spt,:]
             x_qry = batch_x[:,k_spt:,:]
             y_qry = batch_y[:,k_spt:,:]
-            x_spt, y_spt, x_qry, y_qry = torch.from_numpy(x_spt).float().to(device), torch.from_numpy(y_spt).float().to(device), \
-                                         torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device)
+            x_spt, y_spt, x_qry, y_qry, n_spt = torch.from_numpy(x_spt).float().to(device), torch.from_numpy(y_spt).float().to(device), \
+                                         torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device), torch.from_numpy(n_spt).float().to(device)
 
-            for x_spt_one, y_spt_one, x_qry_one, y_qry_one, names_one in zip(x_spt,y_spt,x_qry,y_qry,names):
+            t = 0
+            for x_spt_one, y_spt_one, x_qry_one, y_qry_one, n_spt_one, names_one in zip(x_spt,y_spt,x_qry,y_qry,n_spt,names):
                 n_spt = names_one[:k_spt]
                 n_qry = names_one[k_spt:]
-                loss,w,res = maml.finetuning(x_spt_one,y_spt_one,x_qry_one,y_qry_one)
-                test_losses.append(loss)
+                if args.meta == 1:
+                    loss,w,res = maml.class_finetuning(n_spt_one, x_spt_one,y_spt_one,x_qry_one,y_qry_one)
+                    test_losses.append(loss)
+                else:
+                    train_loss,test_loss,w,_ = maml.direct_update(x_spt_one.unsqueeze(0), y_spt_one.unsqueeze(0),x_qry_one.unsqueeze(0),y_qry_one.unsqueeze(0))
+                    test_losses.append(test_loss)
                 for i in range(x_spt_one.shape[0]):
                     name = n_spt[i]
                     cam1 = get_CAM(w[0][i])
-                    cam2 = get_CAM(w[1][i])
+                    if len(w) > 1:
+                        cam2 = get_CAM(w[1][i])
+                    else:
+                        cam2 = None
                     pref = name.split("_00")[0]
                     pos = db_train.output_scale.inverse_transform(y_spt_one[i].cpu().numpy().reshape(1,-1)).squeeze()
-                    if mode == "polar":
-                        try:
-                            img = cv.imread('/home/tesca/data/part-affordance-dataset/polar_tools/' + name + '_polar.jpg')
-                        except:
-                            img = None
-                    elif mode == "center":
-                        img = cv.imread('/home/tesca/data/part-affordance-dataset/center_tools/' + name + '_center.jpg')
-                        # Scale target point to position in 224x224 img
-                        mult = [(pos[0] * 224/img.shape[0])-112, (pos[1] * 224/img.shape[1])-112]
-                        r = 224*np.sqrt(mult[0]**2 + mult[1]**2)/(0.5*np.sqrt(2*(224**2)))
-                        a = (224/(2*np.pi)) * math.atan2(mult[1],mult[0]) % 224
-                        tf_pos = [r,a]
-                        tf_img = img_polar_tf(cv.resize(img, (224,224)))
-                        '''inv_x = r*(0.5*np.sqrt(2*(224**2))/224) * math.cos(2*np.pi*a/224)
-                        inv_y = r*(0.5*np.sqrt(2*(224**2))/224) * math.sin(2*np.pi*a/224)
-                        #inv_y = np.exp(r*np.log(224)/224) * math.sin(2*np.pi*a/224)
-                        pdb.set_trace()
-                        print(tf_pos)
-                        cv.circle(tf_img,(int(tf_pos[1]),int(tf_pos[0])),5,[255,255,0])
-                        cv.imshow("im", tf_img)
-                        cv.waitKey(0)'''
-                    else:
-                        img = cv.imread('/home/tesca/data/part-affordance-dataset/tools/' + pref + '/' + name + '_rgb.jpg')
+                    img = cv.imread('/home/tesca/data/part-affordance-dataset/center_tools/' + name + '_center.jpg')
+                    # Scale target point to position in 224x224 img
+                    mult = [(pos[0] * 224/img.shape[0])-112, (pos[1] * 224/img.shape[1])-112]
+                    r = 224*np.sqrt(mult[0]**2 + mult[1]**2)/(0.5*np.sqrt(2*(224**2)))
+                    a = (224/(2*np.pi)) * math.atan2(mult[1],mult[0]) % 224
+                    tf_pos = [r,a]
+                    tf_img = img_polar_tf(cv.resize(img, (224,224)))
                     if img is not None:
                         height, width, _ = img.shape
                         heatmap1 = cv.applyColorMap(cv.resize(cam1.transpose(),(width, height)), cv.COLORMAP_JET)
                         result1 = heatmap1 * 0.3 + img * 0.5
                         cv.circle(result1,(int(pos[1]),int(pos[0])),5,[255,255,0])
-                        cv.imwrite('data/cam/' + name + 'ex' + str(args.exclude) + 'polar' + str(args.polar) + '_CAM_1.jpg', result1)
-                        if polar:
+                        cv.imwrite('data/cam/polar' + str(args.polar) + 'meta' + str(args.meta) +'/' + name + '_ex'+ str(args.exclude) + '_t' + str(t) + '.jpg', result1)
+                        if polar and (cam2 is not None):
                             height, width, _ = tf_img.shape
                             heatmap2 = cv.applyColorMap(cv.resize(cam2,(width, height)), cv.COLORMAP_JET)
                             result2 = heatmap2 * 0.3 + tf_img * 0.5
                             cv.circle(result2,(int(tf_pos[1]),int(tf_pos[0])),5,[255,255,0])
-                            cv.imwrite('data/cam/' + name + 'ex' + str(args.exclude) + '_CAM_2.jpg', result2)
+                            cv.imwrite('data/cam/' + name + 'ex' + str(args.exclude) + '_CAM_polar.jpg', result2)
+                t+=1
 
-            torch.save(maml.state_dict(), save_path + str(epoch%2000) + "_al.pt")
+            torch.save(maml.state_dict(), save_path + str(epoch%2000) + "_meta" + str(args.meta) + "_polar" + str(args.polar) + ".pt")
             print('Test Loss:', np.array(test_losses).mean(axis=0))
             
 
@@ -207,14 +196,15 @@ def main():
 if __name__ == '__main__':
 
     argparser = argparse.ArgumentParser()
+    argparser.add_argument('--meta', type=int, help='epoch number', default=1)
     argparser.add_argument('--exclude', type=int, help='epoch number', default=0)
     argparser.add_argument('--polar', type=int, help='epoch number', default=1)
     argparser.add_argument('--sample_size', type=int, help='epoch number', default=10)
-    argparser.add_argument('--epoch', type=int, help='epoch number', default=20001)
+    argparser.add_argument('--epoch', type=int, help='epoch number', default=10001)
     argparser.add_argument('--k_spt', type=int, help='k shot for support set', default=1)
-    argparser.add_argument('--k_qry', type=int, help='k shot for query set', default=1)
+    argparser.add_argument('--k_qry', type=int, help='k shot for query set', default=3)
     argparser.add_argument('--task_num', type=int, help='meta batch size, namely task num', default=10)
-    argparser.add_argument('--meta_lr', type=float, help='meta-level outer learning rate', default=0.001)
+    argparser.add_argument('--meta_lr', type=float, help='meta-level outer learning rate', default=0.0001)
     argparser.add_argument('--update_lr', type=float, help='task-level inner update learning rate', default=0.01)
     argparser.add_argument('--update_step', type=int, help='task-level inner update steps', default=5)
     argparser.add_argument('--update_step_test', type=int, help='update steps for finetunning', default=10)
