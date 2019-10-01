@@ -77,7 +77,9 @@ class Affordances:
         self.dim_output = dim_out
         self.dim_input = len(list(self.inputs.values())[0])
         self.output_scale = preprocessing.MinMaxScaler(feature_range=(-1,1))
-        self.output_scale.fit(np.concatenate(all_vals)[:,self.dim_output])
+        val_range = np.matrix([[0,0],[480,640]])
+        self.output_scale.fit(val_range)
+        #self.output_scale.fit(np.concatenate(all_vals)[:,self.dim_output])
         self.center = np.array([240,320,0])
         all_objs = list(sorted(set([k.split("_00")[0] for k in self.valid_keys])))
         self.categories = list(sorted(set([k1.split("_")[0] for k1 in all_objs if sum([o.startswith(k1.split("_")[0]) for o in all_objs]) >= self.num_samples_per_class])))
@@ -133,7 +135,7 @@ class Affordances:
                     tf_out_x = self.center[0] + (r * math.cos(a))
                     tf_out_y = self.center[1] + (r * math.sin(a))
                     tf_out_z = pt[2] * (1+tf_z)
-                    out = self.output_scale.transform(np.array([tf_out_x,tf_out_y,tf_out_z]).reshape(1,-1)).squeeze()[:self.dim_output]
+                    out = self.output_scale.transform(np.array([tf_out_x,tf_out_y,tf_out_z])[:self.dim_output].reshape(1,-1)).squeeze()[:self.dim_output]
                     #if not self.train:
                     #    pdb.set_trace()
                     #out = self.output_scale.transform(np.array([aff_data[sample_keys[sk[s]]][-1][:self.dim_output]]).reshape(1,-1)).squeeze()
@@ -141,7 +143,6 @@ class Affordances:
                     #output_list.append([tf_out_x,tf_out_y])
             init_inputs[t] = np.stack(input_list)
             neg_inputs[t] = np.stack(negative_list)
-            #outputs[t] = tmp_scale.fit_transform(np.stack(output_list)[:,:self.dim_output])
             outputs[t] = np.stack(output_list)
             selected_keys.append(sel_keys)
         #pdf_data = np.concatenate(pdf_data)
