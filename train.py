@@ -92,7 +92,7 @@ def main():
             ('reshape',[196]),
             ('linear', [196,196,True]),
             ('leakyrelu', [0.01, True]),
-            ('linear', [2,196,True])
+            ('linear', [1,196,True])
         ]
 
     device = torch.device('cuda')
@@ -121,7 +121,7 @@ def main():
                                      torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device), torch.from_numpy(n_spt).float().to(device)
 
         if args.meta == 1:
-            acc, loss, train_acc, grad = maml.class_forward(n_spt, x_spt, y_spt, x_qry, y_qry)
+            acc, loss, train_acc, grad = maml.class_forward(n_spt, x_spt, y_spt, x_qry, y_qry,debug=epoch>25)
             losses.append(acc)
             training.append(train_acc)
             max_grad = max(max_grad, grad)
@@ -138,7 +138,7 @@ def main():
             losses,training = [],[]
             max_grad = 0
 
-        if epoch % 1000 == 0:  # evaluation
+        if epoch % 500 == 0:  # evaluation
             test_losses = []
             batch_x,n_spt,batch_y,names,dist = db_test.next()
             x_spt = batch_x[:,:k_spt,:]

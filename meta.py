@@ -114,11 +114,12 @@ class Meta(nn.Module):
 
         return total_loss.item(), total_test_loss.item(), cam_vals, max_grad
 
-    def class_forward(self, n_spt, x_spt, y_spt, x_qry, y_qry,print_flag=False):
+    def class_forward(self, n_spt, x_spt, y_spt, x_qry, y_qry,debug=False):
         task_num = x_spt.size(0)
         losses_q, losses_s = 0, 0
         test_corrects = [0 for _ in range(self.update_step + 1)]
         train_corrects = [0 for _ in range(self.update_step)]
+        loss_fn = nn.BCEWithLogitsLoss()
 
         for i in range(task_num):
             s_weights = self.net.parameters()
@@ -127,25 +128,37 @@ class Meta(nn.Module):
                 loss_q = self.avg_loss(logits_q, y_qry[i])
                 test_corrects[0] += loss_q.item()
 
-            ## Update model w.r.t. classification loss
             for k in range(self.update_step):
+                ## Update model w.r.t. classification loss
                 logits_a = self.net(x_spt[i], vars=s_weights, bn_training=True)
                 logits_b = self.net(x_qry[i], vars=s_weights, bn_training=True)
                 logits_c = self.net(n_spt[i], vars=s_weights, bn_training=True)
-                lossa = F.cross_entropy(logits_a, torch.ones(x_spt.shape[1]).long().cuda())
+                logits_r = self.net(x_spt[i], vars=s_weights, bn_training=True, hook=7)
+                '''lossa = F.cross_entropy(logits_a, torch.ones(x_spt.shape[1]).long().cuda())
                 lossb = F.cross_entropy(logits_b, torch.ones(x_qry.shape[1]).long().cuda())
                 lossc = F.cross_entropy(logits_c, torch.zeros(n_spt.shape[1]).long().cuda())
-                grad_a = list(torch.autograd.grad(lossa+lossb+lossc, s_weights,allow_unused=True))
+                lossr = self.avg_loss(logits_r, y_spt[i])'''
+                lossa = loss_fn(logits_a, torch.ones(x_spt.shape[1]).float().cuda().unsqueeze(1))/x_spt.shape[1]
+                lossb = loss_fn(logits_b, torch.ones(x_qry.shape[1]).float().cuda().unsqueeze(1))/x_qry.shape[1]
+                lossc = loss_fn(logits_c, torch.zeros(n_spt.shape[1]).float().cuda().unsqueeze(1))/n_spt.shape[1]
+                lossr = self.avg_loss(logits_r, y_spt[i])
+                #if debug:
+                #    pdb.set_trace()
+                train_corrects[k] += lossr.item()
+                grad_a = list(torch.autograd.grad(lossa+lossb+lossc+(3*lossr), s_weights,allow_unused=True))
                 for g in range(len(grad_a)):
                     if grad_a[g] is None:
                         pdb.set_trace()
                         grad_a[g] = torch.zeros_like(s_weights[g])
                 s_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad_a, s_weights)))  
-                del lossa, lossb, grad_a, logits_a, logits_b
+                with torch.no_grad():
+                    logits_q = self.net(x_qry[i], vars=s_weights, bn_training=True, hook=7)
+                    loss_q = self.avg_loss(logits_q, y_qry[i])
+                    test_corrects[k+1] += loss_q.item()
+                del lossa, lossb, lossc, lossr, grad_a, logits_a, logits_b, logits_c, logits_r
 
-            ## Update model w.r.t. location loss
-            for k in range(self.update_step):
-                logits_a = self.net(x_spt[i], vars=s_weights, bn_training=True, hook=7)
+                ## Update model w.r.t. location loss
+                '''logits_a = self.net(x_spt[i], vars=s_weights, bn_training=True, hook=7)
                 loss = self.avg_loss(logits_a, y_spt[i])
                 train_corrects[k] += loss.item()
                 grad_a = list(torch.autograd.grad(loss, s_weights[4:6],allow_unused=True))
@@ -158,7 +171,7 @@ class Meta(nn.Module):
                     logits_q = self.net(x_qry[i], vars=s_weights, bn_training=True, hook=7)
                     loss_q = self.avg_loss(logits_q, y_qry[i])
                     test_corrects[k+1] += loss_q.item()
-                del loss, loss_q, grad_a, logits_a, logits_q
+                del loss, loss_q, grad_a, logits_a, logits_q'''
 
             ## Get post-tuning losses for task and AL objectives
             logits_q = self.net(x_qry[i], vars=s_weights, bn_training=True, hook=7)
@@ -252,6 +265,7 @@ class Meta(nn.Module):
         querysz = x_qry.size(0)
 
         corrects = [0 for _ in range(self.update_step_test + 1)]
+        loss_fn = nn.BCEWithLogitsLoss()
 
         net = deepcopy(self.net)
         fast_weights = list(net.parameters())
@@ -259,25 +273,33 @@ class Meta(nn.Module):
             logits_q = net(x_qry, vars=fast_weights, bn_training=True, hook=7)
             loss_q = self.avg_loss(logits_q, y_qry)
             corrects[0] += loss_q.item()
-        ## Update model w.r.t. classification loss
         for k in range(self.update_step_test):
+            ## Update model w.r.t. classification loss
             logits_a = net(x_spt, vars=fast_weights, bn_training=True)
             logits_b = net(x_qry, vars=fast_weights, bn_training=True)
             logits_c = net(n_spt, vars=fast_weights, bn_training=True)
-            lossa = F.cross_entropy(logits_a, torch.ones(x_spt.shape[0]).long().cuda())
+            logits_r = net(x_spt, vars=fast_weights, bn_training=True, hook=7)
+            lossa = loss_fn(logits_a, torch.ones(x_spt.shape[0]).float().cuda().unsqueeze(1))/x_spt.shape[0]
+            lossb = loss_fn(logits_b, torch.ones(x_qry.shape[0]).float().cuda().unsqueeze(1))/x_qry.shape[0]
+            lossc = loss_fn(logits_c, torch.zeros(n_spt.shape[0]).float().cuda().unsqueeze(1))/n_spt.shape[0]
+            lossr = self.avg_loss(logits_r, y_spt)
+            '''lossa = F.cross_entropy(logits_a, torch.ones(x_spt.shape[0]).long().cuda())
             lossb = F.cross_entropy(logits_b, torch.ones(x_qry.shape[0]).long().cuda())
-            lossc = F.cross_entropy(logits_c, torch.zeros(n_spt.shape[0]).long().cuda())
-            grad_a = list(torch.autograd.grad(lossa+lossb+lossc, fast_weights,allow_unused=True))
+            lossc = F.cross_entropy(logits_c, torch.zeros(n_spt.shape[0]).long().cuda())'''
+            grad_a = list(torch.autograd.grad(lossa+lossb+lossc+(3*lossr), fast_weights,allow_unused=True))
             for g in range(len(grad_a)):
                 if grad_a[g] is None:
                     pdb.set_trace()
                     grad_a[g] = torch.zeros_like(s_weights[g])
             fast_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad_a, fast_weights)))  
-            del lossa, lossb, grad_a, logits_a, logits_b
+            with torch.no_grad():
+                logits_q = net(x_qry, vars=fast_weights, bn_training=True, hook=7)
+                loss_q = self.avg_loss(logits_q, y_qry)
+                corrects[k+1] += loss_q.item()
+            del lossa, lossb, lossc, lossr, grad_a, logits_a, logits_b, logits_c, logits_r
 
-        ## Update model w.r.t. location loss
-        for k in range(self.update_step_test):
-            logits_a = net(x_spt, vars=fast_weights, bn_training=True, hook=7)
+            ## Update model w.r.t. location loss
+            '''logits_a = net(x_spt, vars=fast_weights, bn_training=True, hook=7)
             loss = self.avg_loss(logits_a, y_spt)
             grad_a = list(torch.autograd.grad(loss, fast_weights[4:6],allow_unused=True))
             for g in range(len(grad_a)):
@@ -288,9 +310,10 @@ class Meta(nn.Module):
             with torch.no_grad():
                 logits_q = net(x_qry, vars=fast_weights, bn_training=True, hook=7)
                 loss_q = self.avg_loss(logits_q, y_qry)
-                corrects[k+1] += loss_q.item()
+                corrects[k+1] += loss_q.item()'''
         cam_vals1 = net(x_spt,vars=fast_weights,bn_training=True,hook=3,debug=debug)
-        del net,loss, loss_q, grad_a, logits_a
+        #del net,loss, loss_q, grad_a, logits_a
+        del net
 
         accs = np.array(corrects) 
         return accs,[cam_vals1], logits_q
