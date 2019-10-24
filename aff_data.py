@@ -151,6 +151,58 @@ class Affordances:
         #    stats.append(norm.fit(pdf_data[:,i]))
         return init_inputs, neg_inputs, outputs, selected_keys, stats
 
+    def project_tf(self, name_spt, tf):
+        spt_inputs = np.zeros([self.num_samples_per_class * self.sample_size, 14,14,1024])
+        qry_inputs = np.zeros([self.num_samples_per_class * self.sample_size, 14,14,1024])
+        neg_inputs = np.zeros([self.num_samples_per_class * self.sample_size, 14,14,1024])
+        outputs = np.zeros([self.num_samples_per_class * self.sample_size, self.dim_output])
+        output_list,qry_input_list,spt_input_list,negative_list,sel_keys,cart_out = [],[],[],[],[]
+
+        # Get spt/qry object category name
+        cat = name_spt.split("_")[0]
+
+        # Get list of other object categories
+        neg_cats = self.rand.choice(len(self.categories), self.num_samples_per_class, replace=True)
+        while not (c[t] in neg_cats):
+            neg_cats = self.rand.choice(len(self.categories), self.num_samples_per_class, replace=True)
+
+        # Get list of objects within spt/qry category
+        obj_keys = list(sorted(set([k.split("_00")[0] for k in self.valid_keys if k.startswith(cat)])))
+
+        for n in range(len(obj_keys)):
+            # Get negative examples
+            negative_keys = list([key for key in self.valid_keys if not key.startswith(self.categories[neg_cats[n]])])
+            nk = self.rand.choice(len(negative_keys), self.sample_size, replace=False)
+
+            # Get positive examples
+            sample_keys = list([key for key in self.valid_keys if key.startswith(obj_keys[n])])
+            sk = self.rand.choice(len(sample_keys), self.sample_size, replace=False)
+            for s in range(self.sample_size):
+                neg_fts = self.inputs[negative_keys[nk[s]]]
+                negative_list.append(neg_fts.reshape((1024,14,14)).transpose())
+                sel_keys.append(sample_keys[sk[s]])
+                fts = self.inputs[sample_keys[sk[s]]]
+                if obj_keys[n] == name_spt:
+                    spt_input_list.append(fts.reshape((1024,14,14)).transpose())
+                else:
+                    qry_input_list.append(fts.reshape((1024,14,14)).transpose())
+                ## TODO Get centroid and direction of grasp in image
+                ## Get TF wrt grasp
+                output_list.append(out)
+        spt_inputs = np.stack(spt_input_list)
+        qry_inputs = np.stack(qry_input_list)
+        neg_inputs = np.stack(negative_list)
+        outputs = np.stack(output_list)
+        selected_keys.append(sel_keys)
+        return init_inputs, neg_inputs, outputs, selected_keys, stats
+
+        # Get support images
+        # For each support image, get centroid and direction of grasp
+        # Get tf wrt grasp
+        # Add to outputs
+        # Get negative images
+        # Get query images
+
 if __name__ == '__main__':
     IN = Affordances(5,3,3,2)
     data = IN.next()
