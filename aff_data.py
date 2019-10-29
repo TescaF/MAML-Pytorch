@@ -1,3 +1,6 @@
+import sklearn.cluster
+from sklearn.linear_model import LinearRegression
+import scipy
 from scipy.stats import norm
 import sklearn
 import math
@@ -26,18 +29,23 @@ class Affordances:
         :param k_qry:
         :param imgsz:
         """
+        self.px_to_cm = 1.0/7.6
+        self.cm_to_std = [1.33/42.0,1.0/42.0] # Standardize 480x640 image dims
         self.train = train
         self.rand = RandomState(222)
         self.affs = []
         self.sample_size = samples
-        self.base_loc = "/home/tesca/data/part-affordance-dataset/tools/"
+        self.aff_dir = "/home/tesca/data/part-affordance-dataset/tools/"
         fts_loc = "/home/tesca/data/part-affordance-dataset/features/" + mode + "_resnet_pool_fts-14D.pkl"
         #fts_loc = "/home/tesca/data/part-affordance-dataset/features/resnet_fts.pkl"
         #fts_loc = "/home/tesca/data/part-affordance-dataset/features/resnet_polar_fts.pkl"
         with open(fts_loc, 'rb') as handle:
             self.inputs = pickle.load(handle)       #dict(img) = [[4096x1], ... ]
         categories = list(sorted(set([k.split("_")[0] for k in self.inputs.keys()])))
+        self.all_categories = categories
+        self.all_keys = list(sorted(self.inputs.keys()))
         print("Categories: " + str(categories))
+        self.exclude = exclude
         if exclude >= 0:
             if train:
                 print("Excluding category '" + str(categories[exclude]) + "'")
@@ -156,24 +164,24 @@ class Affordances:
         qry_inputs = np.zeros([self.num_samples_per_class * self.sample_size, 14,14,1024])
         neg_inputs = np.zeros([self.num_samples_per_class * self.sample_size, 14,14,1024])
         outputs = np.zeros([self.num_samples_per_class * self.sample_size, self.dim_output])
-        output_list,qry_input_list,spt_input_list,negative_list,sel_keys,cart_out = [],[],[],[],[]
+        spt_output_list,qry_output_list,qry_input_list,spt_input_list,negative_list,sel_keys,cart_out = [],[],[],[],[],[],[]
 
         # Get spt/qry object category name
         cat = name_spt.split("_")[0]
 
         # Get list of other object categories
-        neg_cats = self.rand.choice(len(self.categories), self.num_samples_per_class, replace=True)
-        while not (c[t] in neg_cats):
-            neg_cats = self.rand.choice(len(self.categories), self.num_samples_per_class, replace=True)
+        neg_cats = self.rand.choice(len(self.all_categories), self.num_samples_per_class, replace=True)
+        while self.exclude in neg_cats:
+            neg_cats = self.rand.choice(len(self.all_categories), self.num_samples_per_class, replace=True)
 
         # Get list of objects within spt/qry category
         obj_keys = list(sorted(set([k.split("_00")[0] for k in self.valid_keys if k.startswith(cat)])))
 
-        for n in range(len(obj_keys)):
-            # Get negative examples
-            negative_keys = list([key for key in self.valid_keys if not key.startswith(self.categories[neg_cats[n]])])
-            nk = self.rand.choice(len(negative_keys), self.sample_size, replace=False)
+        # Get negative examples
+        negative_keys = list([key for key in self.all_keys if not key.startswith(cat)])
+        nk = self.rand.choice(len(negative_keys), self.sample_size, replace=False)
 
+        for n in range(len(obj_keys)):
             # Get positive examples
             sample_keys = list([key for key in self.valid_keys if key.startswith(obj_keys[n])])
             sk = self.rand.choice(len(sample_keys), self.sample_size, replace=False)
@@ -182,19 +190,19 @@ class Affordances:
                 negative_list.append(neg_fts.reshape((1024,14,14)).transpose())
                 sel_keys.append(sample_keys[sk[s]])
                 fts = self.inputs[sample_keys[sk[s]]]
-                if obj_keys[n] == name_spt:
+                if sample_keys[sk[s]].startswith(name_spt):
+                    out = self.apply_tf_wrt_grasp(sample_keys[sk[s]], tf)
+                    spt_output_list.append(out)
                     spt_input_list.append(fts.reshape((1024,14,14)).transpose())
                 else:
+                    qry_output_list.append(np.matrix([0,0]))
                     qry_input_list.append(fts.reshape((1024,14,14)).transpose())
-                ## TODO Get centroid and direction of grasp in image
-                ## Get TF wrt grasp
-                output_list.append(out)
         spt_inputs = np.stack(spt_input_list)
         qry_inputs = np.stack(qry_input_list)
         neg_inputs = np.stack(negative_list)
-        outputs = np.stack(output_list)
-        selected_keys.append(sel_keys)
-        return init_inputs, neg_inputs, outputs, selected_keys, stats
+        spt_outputs = np.stack(spt_output_list)
+        qry_outputs = np.stack(qry_output_list)
+        return spt_inputs, qry_inputs, neg_inputs, spt_outputs, qry_outputs, sel_keys
 
         # Get support images
         # For each support image, get centroid and direction of grasp
@@ -202,6 +210,37 @@ class Affordances:
         # Add to outputs
         # Get negative images
         # Get query images
+
+    def apply_tf_wrt_grasp(self, img_name, tf):
+        label = scipy.io.loadmat(self.aff_dir + img_name.split("_00")[0] + "/" + img_name + "_label.mat")
+        img_affs = label['gt_label']
+
+        grasp_pts = np.matrix([(i,j) for i in range(img_affs.shape[0]) for j in range(img_affs.shape[1]) if img_affs[i,j] == 1])
+        aff_pts = np.matrix([(i,j) for i in range(img_affs.shape[0]) for j in range(img_affs.shape[1]) if img_affs[i,j] > 1])
+        clusters = sklearn.cluster.DBSCAN(eps=3, min_samples=5).fit_predict(aff_pts)
+
+        # Get edge normal
+        reg = LinearRegression().fit(grasp_pts[:,0], grasp_pts[:,1])
+        normal = math.atan(reg.coef_) #+ math.pi/2.0
+
+        ## Pick TF direction that minimizes distance from aff points mean
+        mean_aff = np.multiply(np.mean(aff_pts,axis=0) * self.px_to_cm, self.cm_to_std) - 1.0
+        mean_grasp = np.multiply(np.mean(grasp_pts,axis=0) * self.px_to_cm, self.cm_to_std) - 1.0
+
+        # Project TF x and y
+        tf_x = tf.pose.position.x
+        tf_y = tf.pose.position.y
+        tf_r = math.sqrt(tf_x**2 + tf_y**2)
+        ang = normal + math.atan2(tf_y,tf_x)
+        ee_x = math.cos(ang) * tf_r
+        ee_y = math.sin(ang) * tf_r
+
+        # Select projection that is nearest to affordance labels
+        dist_1 = np.linalg.norm((mean_grasp + [ee_x,ee_y]) - mean_aff)
+        dist_2 = np.linalg.norm((mean_grasp - [ee_x,ee_y]) - mean_aff)
+        if dist_1 < dist_2:
+            return [ee_x,ee_y]
+        return [-ee_x,-ee_y]
 
 if __name__ == '__main__':
     IN = Affordances(5,3,3,2)
