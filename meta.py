@@ -415,9 +415,11 @@ class Meta(nn.Module):
 
         logits = net(x_qry, vars=net.parameters(), bn_training=True, hook=hook)
         cam_vals1 = net(x_spt,vars=net.parameters(),bn_training=True,hook=hook-2,debug=debug)
+        cam_vals2 = net(x_qry,vars=net.parameters(),bn_training=True,hook=hook-2,debug=debug)
         pred = self.avg_pred(logits)
         del logits, s_weights
-        return loss, [cam_vals1],  np.array(train_corrects)/task_num, pred
+        return loss, [cam_vals2],  np.array(train_corrects)/task_num, pred
+        #return loss, [torch.cat([cam_vals1,cam_vals2])],  np.array(train_corrects)/task_num, pred
 
 def main():
     pass

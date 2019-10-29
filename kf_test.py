@@ -92,20 +92,24 @@ def main():
     tf_bag = rosbag.Bag(tf_path)
     for topic, msg, t in tf_bag.read_messages(topics=['eef_pose_relative']):
         tf = msg
+    cam_path = os.path.expanduser("~") + '/data/cam/ex' + str(exclude_idx) + '/'
+    if not os.path.exists(cam_path):
+        os.makedirs(cam_path)
     
     x_spt,x_qry,n_spt,y_spt,y_qry,names = db_tune.project_tf(args.name, tf)
     x_spt, y_spt, x_qry, y_qry, n_spt = torch.from_numpy(x_spt).float().to(device), torch.from_numpy(y_spt).float().to(device), \
                                          torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device), torch.from_numpy(n_spt).float().to(device)
-
+    names_spt = names[:x_spt.shape[0]]
+    names_qry = names[x_spt.shape[0]:]
     loss,w,acc,res = maml.class_tune2(n_spt, x_spt,y_spt,x_qry,y_qry)
     #loss,w,res = maml.class_finetuning(n_spt, x_spt,y_spt,x_qry,y_qry)
-    for i in range(len(names)):
+    for i in range(len(names_qry)):
         cam1 = get_CAM(w[0][i])
         if len(w) > 1:
             cam2 = get_CAM(w[1][i])
         else:
             cam2 = None
-        pos = np.divide(res[i].cpu().detach().numpy().reshape(1,-1),(db_tune.px_to_cm * db_tune.cm_to_std))
+        pos = (np.divide(res[i].cpu().detach().numpy().reshape(1,-1)-1.0,db_tune.cm_to_std) / db_tune.px_to_cm).squeeze()
         img = cv.imread('/home/tesca/data/part-affordance-dataset/center_tools/' + names[i] + '_center.jpg')
         # Scale target point to position in 224x224 img
         #mult = [(pos[0] * 224/img.shape[0])-112, (pos[1] * 224/img.shape[1])-112]
@@ -118,7 +122,7 @@ def main():
             heatmap1 = cv.applyColorMap(cv.resize(cam1.transpose(),(width, height)), cv.COLORMAP_JET)
             result1 = heatmap1 * 0.3 + img * 0.5
             cv.circle(result1,(int(pos[1]),int(pos[0])),5,[255,255,0])
-            cv.imwrite('data/cam/polar' + str(args.polar) + 'meta' + str(args.meta) +'/ex' + str(exclude_idx) + '/' + name + '_t' + str(t) + '.jpg', result1)
+            cv.imwrite(cam_path + names[i] + '.jpg', result1)
             #if polar and (cam2 is not None):
             #    height, width, _ = tf_img.shape
             #    heatmap2 = cv.applyColorMap(cv.resize(cam2,(width, height)), cv.COLORMAP_JET)
