@@ -102,8 +102,10 @@ def main():
     names_spt = names[:x_spt.shape[0]]
     names_qry = names[x_spt.shape[0]:]
     loss,w,acc,res = maml.class_tune2(n_spt, x_spt,y_spt,x_qry,y_qry)
+    print("Training loss: " + str(loss))
     #loss,w,res = maml.class_finetuning(n_spt, x_spt,y_spt,x_qry,y_qry)
     for i in range(len(names_qry)):
+        print(names_qry[i] + ": " + str(res[i].item()))
         cam1 = get_CAM(w[0][i])
         if len(w) > 1:
             cam2 = get_CAM(w[1][i])

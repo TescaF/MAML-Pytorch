@@ -192,6 +192,7 @@ class Affordances:
                 fts = self.inputs[sample_keys[sk[s]]]
                 if sample_keys[sk[s]].startswith(name_spt):
                     out = self.apply_tf_wrt_grasp(sample_keys[sk[s]], tf)
+                    im = sample_keys[sk[s]]
                     spt_output_list.append(out)
                     spt_input_list.append(fts.reshape((1024,14,14)).transpose())
                 else:
@@ -228,19 +229,21 @@ class Affordances:
         mean_grasp = np.multiply(np.mean(grasp_pts,axis=0) * self.px_to_cm, self.cm_to_std) - 1.0
 
         # Project TF x and y
-        tf_x = tf.pose.position.x
-        tf_y = tf.pose.position.y
-        tf_r = math.sqrt(tf_x**2 + tf_y**2)
-        ang = normal + math.atan2(tf_y,tf_x)
-        ee_x = math.cos(ang) * tf_r
-        ee_y = math.sin(ang) * tf_r
+        tf_x = tf.pose.position.x 
+        tf_y = tf.pose.position.z
+        tf_z = tf.pose.position.y
+        tf_r = math.sqrt(tf_x**2.0 + tf_y**2.0)
+        tf_ang = math.atan2(tf_y, tf_x)
+        a1 = tf_ang + normal
+        ee_1 = [math.cos(a1) * tf_r * 100.0 * self.cm_to_std[0], math.sin(a1) * tf_r * 100.0 * self.cm_to_std[1]]
+        ee_2 = [-ee_1[0],-ee_1[1]]
 
         # Select projection that is nearest to affordance labels
-        dist_1 = np.linalg.norm((mean_grasp + [ee_x,ee_y]) - mean_aff)
-        dist_2 = np.linalg.norm((mean_grasp - [ee_x,ee_y]) - mean_aff)
+        dist_1 = np.linalg.norm(ee_1 - mean_aff + mean_grasp)
+        dist_2 = np.linalg.norm(ee_2 - mean_aff + mean_grasp)
         if dist_1 < dist_2:
-            return [ee_x,ee_y]
-        return [-ee_x,-ee_y]
+            return ee_1
+        return ee_2
 
 if __name__ == '__main__':
     IN = Affordances(5,3,3,2)
