@@ -224,10 +224,6 @@ class Affordances:
         reg = LinearRegression().fit(grasp_pts[:,0], grasp_pts[:,1])
         normal = math.atan(reg.coef_) #+ math.pi/2.0
 
-        ## Pick TF direction that minimizes distance from aff points mean
-        mean_aff = np.multiply(np.mean(aff_pts,axis=0) * self.px_to_cm, self.cm_to_std) - 1.0
-        mean_grasp = np.multiply(np.mean(grasp_pts,axis=0) * self.px_to_cm, self.cm_to_std) - 1.0
-
         # Project TF x and y
         tf_x = tf.pose.position.x 
         tf_y = tf.pose.position.z
@@ -238,12 +234,39 @@ class Affordances:
         ee_1 = [math.cos(a1) * tf_r * 100.0 * self.cm_to_std[0], math.sin(a1) * tf_r * 100.0 * self.cm_to_std[1]]
         ee_2 = [-ee_1[0],-ee_1[1]]
 
-        # Select projection that is nearest to affordance labels
+        ## Pick TF direction that minimizes distance from aff points mean
+        mean_aff = np.multiply(np.mean(aff_pts,axis=0) * self.px_to_cm, self.cm_to_std) - 1.0
+        mean_grasp = np.multiply(np.mean(grasp_pts,axis=0) * self.px_to_cm, self.cm_to_std) - 1.0
         dist_1 = np.linalg.norm(ee_1 - mean_aff + mean_grasp)
         dist_2 = np.linalg.norm(ee_2 - mean_aff + mean_grasp)
         if dist_1 < dist_2:
             return ee_1
         return ee_2
+
+    def inverse_project(self, img_name, pt):
+        label = scipy.io.loadmat(self.aff_dir + img_name.split("_00")[0] + "/" + img_name + "_label.mat")
+        img_affs = label['gt_label']
+
+        grasp_pts = np.matrix([(i,j) for i in range(img_affs.shape[0]) for j in range(img_affs.shape[1]) if img_affs[i,j] == 1])
+
+        # Get edge normal
+        reg = LinearRegression().fit(grasp_pts[:,0], grasp_pts[:,1])
+        normal = math.atan(reg.coef_) #+ math.pi/2.0
+
+        pt_r = np.linalg.norm(np.divide(pt,self.cm_to_std)/100.0)
+        pt_ang1 = math.atan2(pt[1], pt[0])
+        inv_pt = np.divide(pt, self.cm_to_std)/100.0
+        pt_ang = math.atan2(inv_pt[1], inv_pt[0])
+        #pt_ang = math.atan2(pt[1]/self.cm_to_std[1], pt[0]/self.cm_to_std[0])
+        a1 = normal - pt_ang
+        ee_1 = [math.cos(a1) * pt_r, math.sin(a1) * pt_r]
+        #ee_1 = [math.cos(a1) * pt_r / (100.0 * self.cm_to_std[0]), math.sin(a1) * pt_r / (100.0 * self.cm_to_std[1])]
+        pdb.set_trace()
+
+        ## Pick TF direction that minimizes distance from aff points mean
+        if ee_1[0] > -ee_1[0]:
+            return ee_1
+        return [-ee_1[0], -ee_1[1]]
 
 if __name__ == '__main__':
     IN = Affordances(5,3,3,2)

@@ -21,20 +21,6 @@ def get_CAM(cam):
     cam_img = np.uint8(255 * cam_img.cpu().detach().numpy())
     return cam_img
 
-def img_polar_tf(img):
-    d = int(img.shape[0]/2)
-    w = int(img.shape[0])
-    tf = np.zeros_like(img)
-    for i in range(img.shape[0]):
-        for j in range(img.shape[1]):
-            r = j/2
-            a = 2*np.pi*i/w
-            x = int(np.floor(r * math.cos(a))+d)
-            y = int(np.floor(r * math.sin(a))+d)
-            if x in range(w) and y in range(w):
-                tf[j,i] = img[x,y]
-    return tf
-
 def main():
 
     torch.manual_seed(222)
@@ -87,53 +73,72 @@ def main():
     print(maml)
     print('Total trainable tensors:', num)
 
-    ## Load TF for y_spt
-    tf_path = os.path.expanduser("~") + '/data/bags/' + args.name + ".bag"
-    tf_bag = rosbag.Bag(tf_path)
-    for topic, msg, t in tf_bag.read_messages(topics=['eef_pose_relative']):
-        tf = msg
-    cam_path = os.path.expanduser("~") + '/data/cam/ex' + str(exclude_idx) + '/'
-    if not os.path.exists(cam_path):
-        os.makedirs(cam_path)
-    
-    x_spt,x_qry,n_spt,y_spt,y_qry,names = db_tune.project_tf(args.name, tf)
-    x_spt, y_spt, x_qry, y_qry, n_spt = torch.from_numpy(x_spt).float().to(device), torch.from_numpy(y_spt).float().to(device), \
-                                         torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device), torch.from_numpy(n_spt).float().to(device)
-    names_spt = names[:x_spt.shape[0]]
-    names_qry = names[x_spt.shape[0]:]
-    loss,w,acc,res = maml.class_tune2(n_spt, x_spt,y_spt,x_qry,y_qry)
-    print("Training loss: " + str(loss))
-    #loss,w,res = maml.class_finetuning(n_spt, x_spt,y_spt,x_qry,y_qry)
-    for i in range(len(names_qry)):
-        print(names_qry[i] + ": " + str(res[i].item()))
-        cam1 = get_CAM(w[0][i])
-        if len(w) > 1:
-            cam2 = get_CAM(w[1][i])
-        else:
-            cam2 = None
-        pos = (np.divide(res[i].cpu().detach().numpy().reshape(1,-1)-1.0,db_tune.cm_to_std) / db_tune.px_to_cm).squeeze()
-        img = cv.imread('/home/tesca/data/part-affordance-dataset/center_tools/' + names[i] + '_center.jpg')
-        # Scale target point to position in 224x224 img
-        #mult = [(pos[0] * 224/img.shape[0])-112, (pos[1] * 224/img.shape[1])-112]
-        #r = 224*np.sqrt(mult[0]**2 + mult[1]**2)/(0.5*np.sqrt(2*(224**2)))
-        #a = (224/(2*np.pi)) * math.atan2(mult[1],mult[0]) % 224
-        #tf_pos = [r,a]
-        #tf_img = img_polar_tf(cv.resize(img, (224,224)))
-        if img is not None:
-            height, width, _ = img.shape
-            heatmap1 = cv.applyColorMap(cv.resize(cam1.transpose(),(width, height)), cv.COLORMAP_JET)
-            result1 = heatmap1 * 0.3 + img * 0.5
-            cv.circle(result1,(int(pos[1]),int(pos[0])),5,[255,255,0])
-            cv.imwrite(cam_path + names[i] + '.jpg', result1)
-            #if polar and (cam2 is not None):
-            #    height, width, _ = tf_img.shape
-            #    heatmap2 = cv.applyColorMap(cv.resize(cam2,(width, height)), cv.COLORMAP_JET)
-            #    result2 = heatmap2 * 0.3 + tf_img * 0.5
-            #    cv.circle(result2,(int(tf_pos[1]),int(tf_pos[0])),5,[255,255,0])
-            #    cv.imwrite('data/cam/' + name + 'ex' + str(exclude_idx) + '_CAM_polar.jpg', result2)
+    ## Load TFs for y_spt
+    demo_num = 1
+    tf_path = os.path.expanduser("~") + '/data/bags/' + args.name + "_" + str(demo_num) + ".bag"
+    while os.path.exists(tf_path):
+        print("-----Loading source demo " + str(demo_num) + "-----")
+        tf_bag = rosbag.Bag(tf_path)
+        tf_list = []
+        for topic, msg, t in tf_bag.read_messages(topics=['eef_pose_relative']):
+            tf_list.append(msg)
+        cam_path = os.path.expanduser("~") + '/data/cam/ex' + str(exclude_idx) + '/demo' + str(demo_num) + '/'
+        if not os.path.exists(cam_path):
+            os.makedirs(cam_path)
+        tf_list = [tf_list[-1]]
+        tf_i = 0 
+        out_txt,tf_pred = [],[]
+        for tf in tf_list:
+            x_spt,x_qry,n_spt,y_spt,y_qry,names = db_tune.project_tf(args.name, tf)
+            x_spt, y_spt, x_qry, y_qry, n_spt = torch.from_numpy(x_spt).float().to(device), torch.from_numpy(y_spt).float().to(device), \
+                                                 torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device), torch.from_numpy(n_spt).float().to(device)
+            names_spt = names[:x_spt.shape[0]]
+            names_qry = names[x_spt.shape[0]:]
+            loss,w,acc,res = maml.class_tune2(n_spt, x_spt,y_spt,x_qry,y_qry)
+            print("KF " + str(tf_i) + " training loss: " + str(loss))
+            for i in range(len(names_qry)):
+                pred = res[i].cpu().detach().numpy()
+                inv_tf = db_tune.inverse_project(names_qry[i],res[i].cpu().detach().numpy())
+                print(names_qry[i] + ": " + str(inv_tf))
+                obj_idx = int(np.floor(i/args.sample_size))
+                if len(out_txt) <= obj_idx:
+                    out_txt.append([])
+                    tf_pred.append([])
+                if len(out_txt[obj_idx]) <= tf_i:
+                    out_txt[obj_idx].append([])
+                    tf_pred[obj_idx].append([])
+                out_txt[obj_idx][tf_i].append([names_qry[i]] + inv_tf)
+                tf_pred[obj_idx][tf_i].append(inv_tf)
+                cam1 = get_CAM(w[0][i])
+                #pos = (np.divide(res[i].cpu().detach().numpy().reshape(1,-1)-1.0,db_tune.cm_to_std) / db_tune.px_to_cm).squeeze()
+                pos = [(pred[0] + 1) / (db_tune.px_to_cm * db_tune.cm_to_std[0]), (pred[1] + 1) / (db_tune.px_to_cm * db_tune.cm_to_std[1])]
+                #y = [(y_spt[i][0] + 1) / (db_tune.px_to_cm * db_tune.cm_to_std[0]), (y_spt[i][1] + 1) / (db_tune.px_to_cm * db_tune.cm_to_std[1])]
 
-    #torch.save(maml.state_dict(), save_path + str(epoch%2000) + "_meta" + str(args.meta) + "_polar" + str(args.polar) + ".pt")
-
+                img = cv.imread('/home/tesca/data/part-affordance-dataset/center_tools/' + names_qry[i] + '_center.jpg')
+                if img is not None:
+                    height, width, _ = img.shape
+                    heatmap1 = cv.applyColorMap(cv.resize(cam1.transpose(),(width, height)), cv.COLORMAP_JET)
+                    result1 = heatmap1 * 0.3 + img * 0.5
+                    #cv.circle(result1,(int(y[1]),int(y[0])),5,[255,255,0])
+                    cv.circle(result1,(int(pos[1]),int(pos[0])),5,[0,255,255])
+                    cv.imwrite(cam_path + names[i] + '-kf_' + str(tf_i) + '.jpg', result1)
+                    #cv.imshow(cam_path + names[i] + '.jpg', result1.astype(np.uint8))
+                    #cv.waitKey(0)
+            tf_i += 1
+        pdb.set_trace()
+        print("Writing transforms to file")
+        for tgt in out_txt:
+            name = tgt[0][0][0].split("_00")[0]
+            file_out = os.path.expanduser("~") + '/data/output/src_' + args.name + "-demo_" + str(demo_num) + "-tgt_" + name + ".txt"
+            f = open(file_out, "w")
+            for kf in tgt:
+                out = ""
+                for img in kf:
+                   out += '%s;' % ','.join(map(str,img))
+                f.write(out + '\n')
+            f.close()
+        demo_num += 1
+        tf_path = os.path.expanduser("~") + '/data/bags/' + args.name + "_" + str(demo_num) + ".bag"
 
 if __name__ == '__main__':
 
