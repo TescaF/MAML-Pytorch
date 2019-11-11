@@ -85,9 +85,9 @@ def main():
         cam_path = os.path.expanduser("~") + '/data/cam/ex' + str(exclude_idx) + '/demo' + str(demo_num) + '/'
         if not os.path.exists(cam_path):
             os.makedirs(cam_path)
-        tf_list = [tf_list[-1]]
+        ##tf_list = [tf_list[-1]]
         tf_i = 0 
-        out_txt,tf_pred = [],[]
+        out_txt,tf_pred,obj_names = [],[],[]
         for tf in tf_list:
             x_spt,x_qry,n_spt,y_spt,y_qry,names = db_tune.project_tf(args.name, tf)
             x_spt, y_spt, x_qry, y_qry, n_spt = torch.from_numpy(x_spt).float().to(device), torch.from_numpy(y_spt).float().to(device), \
@@ -95,47 +95,56 @@ def main():
             names_spt = names[:x_spt.shape[0]]
             names_qry = names[x_spt.shape[0]:]
             loss,w,acc,res = maml.class_tune2(n_spt, x_spt,y_spt,x_qry,y_qry)
-            print("KF " + str(tf_i) + " training loss: " + str(loss))
+            print("KF " + str(tf_i) + " training loss: " + str(np.array([loss])))
             for i in range(len(names_qry)):
                 pred = res[i].cpu().detach().numpy()
                 inv_tf = db_tune.inverse_project(names_qry[i],res[i].cpu().detach().numpy())
-                print(names_qry[i] + ": " + str(inv_tf))
+                #print(names_qry[i] + ": " + str(inv_tf))
                 obj_idx = int(np.floor(i/args.sample_size))
                 if len(out_txt) <= obj_idx:
                     out_txt.append([])
                     tf_pred.append([])
+                    obj_names.append(names_qry[i].split("_00")[0])
                 if len(out_txt[obj_idx]) <= tf_i:
-                    out_txt[obj_idx].append([])
+                    out_txt[obj_idx].append("")
                     tf_pred[obj_idx].append([])
-                out_txt[obj_idx][tf_i].append([names_qry[i]] + inv_tf)
+                out_txt[obj_idx][tf_i] += names_qry[i] + ',' + ('%s;' % ','.join(map(str,inv_tf)))
                 tf_pred[obj_idx][tf_i].append(inv_tf)
                 cam1 = get_CAM(w[0][i])
-                #pos = (np.divide(res[i].cpu().detach().numpy().reshape(1,-1)-1.0,db_tune.cm_to_std) / db_tune.px_to_cm).squeeze()
                 pos = [(pred[0] + 1) / (db_tune.px_to_cm * db_tune.cm_to_std[0]), (pred[1] + 1) / (db_tune.px_to_cm * db_tune.cm_to_std[1])]
-                #y = [(y_spt[i][0] + 1) / (db_tune.px_to_cm * db_tune.cm_to_std[0]), (y_spt[i][1] + 1) / (db_tune.px_to_cm * db_tune.cm_to_std[1])]
 
                 img = cv.imread('/home/tesca/data/part-affordance-dataset/center_tools/' + names_qry[i] + '_center.jpg')
                 if img is not None:
                     height, width, _ = img.shape
                     heatmap1 = cv.applyColorMap(cv.resize(cam1.transpose(),(width, height)), cv.COLORMAP_JET)
                     result1 = heatmap1 * 0.3 + img * 0.5
-                    #cv.circle(result1,(int(y[1]),int(y[0])),5,[255,255,0])
                     cv.circle(result1,(int(pos[1]),int(pos[0])),5,[0,255,255])
-                    cv.imwrite(cam_path + names[i] + '-kf_' + str(tf_i) + '.jpg', result1)
-                    #cv.imshow(cam_path + names[i] + '.jpg', result1.astype(np.uint8))
-                    #cv.waitKey(0)
+                    cv.imwrite(cam_path + names_qry[i] + '-kf_' + str(tf_i) + '.jpg', result1)
+            print("Loss/Median/Mean/Variance")
+            for o in range(len(tf_pred)):
+                med = np.median(np.array(tf_pred[o][tf_i]),axis=0)
+                mean = np.mean(np.array(tf_pred[o][tf_i]),axis=0)
+                var = np.var(np.array(tf_pred[o][tf_i]),axis=0)
+                stats = obj_names[o] + ": " + str(np.array([loss])) + " " + str(np.array(med)) + " " + str(np.array(mean)) + " " + str(np.array(var))
+                print(stats)
+                out_txt[o][tf_i] = "KF " + str(tf_i) + "(loss/median/mean/variance)" + '\n' + stats + '\n' + out_txt[o][tf_i] # + ('%s;' % ','.join(map(str,out_txt[0][tf_i][-1])))
             tf_i += 1
-        pdb.set_trace()
         print("Writing transforms to file")
-        for tgt in out_txt:
-            name = tgt[0][0][0].split("_00")[0]
+        for tgt_i in range(len(out_txt)):
+            tgt = out_txt[tgt_i]
+            name = obj_names[tgt_i]
             file_out = os.path.expanduser("~") + '/data/output/src_' + args.name + "-demo_" + str(demo_num) + "-tgt_" + name + ".txt"
             f = open(file_out, "w")
-            for kf in tgt:
+            for kf_i in range(len(tgt)):
+                kf = tgt[kf_i]
                 out = ""
                 for img in kf:
-                   out += '%s;' % ','.join(map(str,img))
+                   out += img #'%s;' % ','.join(map(str,img))
                 f.write(out + '\n')
+                #median_tf = np.median(np.array(tf_pred[tgt_i][kf_i]),axis=0)
+                #mean_tf = np.mean(np.array(tf_pred[tgt_i][kf_i]),axis=0)
+                #var_tf = np.var(np.array(tf_pred[tgt_i][kf_i]),axis=0)
+                #f.write('%s' % ','.join(map(str,median_tf)) + '\n')
             f.close()
         demo_num += 1
         tf_path = os.path.expanduser("~") + '/data/bags/' + args.name + "_" + str(demo_num) + ".bag"
