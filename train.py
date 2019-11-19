@@ -1,3 +1,4 @@
+import bz2
 import math
 import pdb
 #from torch.utils.tensorboard import SummaryWriter
@@ -11,6 +12,8 @@ from scipy.stats import norm
 import torch.nn.functional as F
 from meta import Meta
 from aff_data import Affordances
+from os.path import expanduser
+from torch import nn
 
 def get_CAM(cam):
     cam = cam.reshape(14,14)
@@ -36,6 +39,18 @@ def img_polar_tf(img):
 
 def main():
 
+    CLUSTER = True
+
+    home = expanduser("~")
+    if CLUSTER:
+        fts_loc = home + "/data/fts.pbz2"
+        print("Loading input files...")
+        with bz2.open(fts_loc, 'rb') as handle:
+            inputs = pickle.load(handle)       #dict(img) = [[4096x1], ... ]
+        print("Done")
+    else:
+        inputs = None
+
     torch.manual_seed(222)
     torch.cuda.manual_seed_all(222)
     np.random.seed(222)
@@ -49,6 +64,8 @@ def main():
     sample_size = args.sample_size # number of images per object
 
     db_train = Affordances(
+                       CLUSTER=CLUSTER,
+                       inputs = inputs,
                        mode="center",
                        train=True,
                        batchsz=args.task_num,
@@ -59,6 +76,8 @@ def main():
                        dim_out=dim_output)
 
     db_test = Affordances(
+                       CLUSTER=CLUSTER,
+                       inputs = inputs,
                        mode="center",
                        train=False,
                        batchsz=args.task_num,
@@ -69,9 +88,13 @@ def main():
                        dim_out=dim_output)
 
     db_test.output_scale = db_train.output_scale
-    save_path = os.getcwd() + '/data/models/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_exclude' + str(args.exclude) + '_epoch'
+    if CLUSTER:
+        device = torch.device('cuda:0')
+        save_path = home + '/data/models/model_batchsz' + str(args.k_spt) + '_lr' + str(args.update_lr) + '_mr' + str(args.meta_lr) + '_lambda' + str(args.lmb) + '_exclude' + str(args.exclude) + '_epoch'
+    else:
+        device = torch.device('cuda')
+        save_path = os.getcwd() + '/data/models/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_exclude' + str(args.exclude) + '_epoch'
     print(str(db_train.dim_input) + "-D input")
-    device = torch.device('cuda')
     dim = db_train.dim_input
     if args.polar == 1 and args.meta == 1:
         config = [
@@ -169,34 +192,35 @@ def main():
                 else:
                     train_loss,test_loss,w,_ = maml.finetuning(x_spt_one.unsqueeze(0), y_spt_one.unsqueeze(0),x_qry_one.unsqueeze(0),y_qry_one.unsqueeze(0))
                     test_losses.append(test_loss)
-                for i in range(x_spt_one.shape[0]):
-                    name = n_spt[i]
-                    cam1 = get_CAM(w[0][i])
-                    if len(w) > 1:
-                        cam2 = get_CAM(w[1][i])
-                    else:
-                        cam2 = None
-                    pref = name.split("_00")[0]
-                    pos = db_train.output_scale.inverse_transform(y_spt_one[i].cpu().numpy().reshape(1,-1)).squeeze()
-                    img = cv.imread('/home/tesca/data/part-affordance-dataset/center_tools/' + name + '_center.jpg')
-                    # Scale target point to position in 224x224 img
-                    mult = [(pos[0] * 224/img.shape[0])-112, (pos[1] * 224/img.shape[1])-112]
-                    r = 224*np.sqrt(mult[0]**2 + mult[1]**2)/(0.5*np.sqrt(2*(224**2)))
-                    a = (224/(2*np.pi)) * math.atan2(mult[1],mult[0]) % 224
-                    tf_pos = [r,a]
-                    tf_img = img_polar_tf(cv.resize(img, (224,224)))
-                    if img is not None:
-                        height, width, _ = img.shape
-                        heatmap1 = cv.applyColorMap(cv.resize(cam1.transpose(),(width, height)), cv.COLORMAP_JET)
-                        result1 = heatmap1 * 0.3 + img * 0.5
-                        cv.circle(result1,(int(pos[1]),int(pos[0])),5,[255,255,0])
-                        cv.imwrite('data/cam/polar' + str(args.polar) + 'meta' + str(args.meta) +'/ex' + str(args.exclude) + '/' + name + '_t' + str(t) + '.jpg', result1)
-                        if polar and (cam2 is not None):
-                            height, width, _ = tf_img.shape
-                            heatmap2 = cv.applyColorMap(cv.resize(cam2,(width, height)), cv.COLORMAP_JET)
-                            result2 = heatmap2 * 0.3 + tf_img * 0.5
-                            cv.circle(result2,(int(tf_pos[1]),int(tf_pos[0])),5,[255,255,0])
-                            cv.imwrite('data/cam/' + name + 'ex' + str(args.exclude) + '_CAM_polar.jpg', result2)
+                if not CLUSTER:
+                    for i in range(x_spt_one.shape[0]):
+                        name = n_spt[i]
+                        cam1 = get_CAM(w[0][i])
+                        if len(w) > 1:
+                            cam2 = get_CAM(w[1][i])
+                        else:
+                            cam2 = None
+                        pref = name.split("_00")[0]
+                        pos = db_train.output_scale.inverse_transform(y_spt_one[i].cpu().numpy().reshape(1,-1)).squeeze()
+                        img = cv.imread('/home/tesca/data/part-affordance-dataset/center_tools/' + name + '_center.jpg')
+                        # Scale target point to position in 224x224 img
+                        mult = [(pos[0] * 224/img.shape[0])-112, (pos[1] * 224/img.shape[1])-112]
+                        r = 224*np.sqrt(mult[0]**2 + mult[1]**2)/(0.5*np.sqrt(2*(224**2)))
+                        a = (224/(2*np.pi)) * math.atan2(mult[1],mult[0]) % 224
+                        tf_pos = [r,a]
+                        tf_img = img_polar_tf(cv.resize(img, (224,224)))
+                        if img is not None:
+                            height, width, _ = img.shape
+                            heatmap1 = cv.applyColorMap(cv.resize(cam1.transpose(),(width, height)), cv.COLORMAP_JET)
+                            result1 = heatmap1 * 0.3 + img * 0.5
+                            cv.circle(result1,(int(pos[1]),int(pos[0])),5,[255,255,0])
+                            cv.imwrite('data/cam/polar' + str(args.polar) + 'meta' + str(args.meta) +'/ex' + str(args.exclude) + '/' + name + '_t' + str(t) + '.jpg', result1)
+                            if polar and (cam2 is not None):
+                                height, width, _ = tf_img.shape
+                                heatmap2 = cv.applyColorMap(cv.resize(cam2,(width, height)), cv.COLORMAP_JET)
+                                result2 = heatmap2 * 0.3 + tf_img * 0.5
+                                cv.circle(result2,(int(tf_pos[1]),int(tf_pos[0])),5,[255,255,0])
+                                cv.imwrite('data/cam/' + name + 'ex' + str(args.exclude) + '_CAM_polar.jpg', result2)
                 t+=1
 
             torch.save(maml.state_dict(), save_path + str(epoch%2000) + "_meta" + str(args.meta) + "_polar" + str(args.polar) + ".pt")
@@ -211,12 +235,13 @@ if __name__ == '__main__':
     argparser.add_argument('--exclude', type=int, help='epoch number', default=0)
     argparser.add_argument('--polar', type=int, help='epoch number', default=1)
     argparser.add_argument('--sample_size', type=int, help='epoch number', default=10)
-    argparser.add_argument('--epoch', type=int, help='epoch number', default=5001)
+    argparser.add_argument('--epoch', type=int, help='epoch number', default=10001)
     argparser.add_argument('--k_spt', type=int, help='k shot for support set', default=1)
     argparser.add_argument('--k_qry', type=int, help='k shot for query set', default=3)
     argparser.add_argument('--task_num', type=int, help='meta batch size, namely task num', default=10)
     argparser.add_argument('--meta_lr', type=float, help='meta-level outer learning rate', default=0.0001)
     argparser.add_argument('--update_lr', type=float, help='task-level inner update learning rate', default=0.01)
+    argparser.add_argument('--lmb', type=float, help='task-level inner update learning rate', default=3.0)
     argparser.add_argument('--update_step', type=int, help='task-level inner update steps', default=5)
     argparser.add_argument('--update_step_test', type=int, help='update steps for finetunning', default=10)
 

@@ -19,16 +19,17 @@ import json
 from PIL import Image
 import pickle
 from numpy.random import RandomState
-
+import os.path
 
 class Affordances:
-    def __init__(self, mode, train, exclude, samples, batchsz, k_shot, k_qry, dim_out):
+    def __init__(self, CLUSTER, inputs, mode, train, exclude, samples, batchsz, k_shot, k_qry, dim_out):
         """
         :param batchsz: task num
         :param k_shot: number of samples for fine-tuning
         :param k_qry:
         :param imgsz:
         """
+        self.inputs = inputs
         self.px_to_cm = 1.0/7.6
         self.cm_to_std = [1.33/42.0,1.0/42.0] # Standardize 480x640 image dims
         self.train = train
@@ -39,8 +40,9 @@ class Affordances:
         fts_loc = "/home/tesca/data/part-affordance-dataset/features/" + mode + "_resnet_pool_fts-14D.pkl"
         #fts_loc = "/home/tesca/data/part-affordance-dataset/features/resnet_fts.pkl"
         #fts_loc = "/home/tesca/data/part-affordance-dataset/features/resnet_polar_fts.pkl"
-        with open(fts_loc, 'rb') as handle:
-            self.inputs = pickle.load(handle)       #dict(img) = [[4096x1], ... ]
+        if not CLUSTER:
+            with open(fts_loc, 'rb') as handle:
+                self.inputs = pickle.load(handle)       #dict(img) = [[4096x1], ... ]
         categories = list(sorted(set([k.split("_")[0] for k in self.inputs.keys()])))
         self.all_categories = categories
         self.all_keys = list(sorted(self.inputs.keys()))
@@ -54,7 +56,10 @@ class Affordances:
 
         self.valid_keys, training_keys, all_vals = [],[],[]
         for aff in range(2,7):
-            aff_loc = "/home/tesca/data/part-affordance-dataset/features/" + mode + "_aff_" + str(aff) + "_positions.pkl"
+            if CLUSTER:
+                aff_loc = os.path.expanduser("~") + "/data/center_aff_" + str(aff) + "_positions.pkl"
+            else:
+                aff_loc = "/home/tesca/data/part-affordance-dataset/features/" + mode + "_aff_" + str(aff) + "_positions.pkl"
             with open(aff_loc, 'rb') as handle:
                 aff_data = pickle.load(handle)      #dict(category) = [img1, img2, ...]
 

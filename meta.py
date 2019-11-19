@@ -56,6 +56,7 @@ class Meta(nn.Module):
         self.loss_fn = loss_fn
         self.accs_fn = accs_fn
         self.output_dim = out_dim
+        self.lmb = args.lmb #lambda
         self.pos_matrix = None
 
     def polar_loss(self, logits, y):
@@ -158,7 +159,7 @@ class Meta(nn.Module):
                 train_corrects[k] += lossr.item()
 
                 ## Update weights
-                grad_a = list(torch.autograd.grad(lossa+lossb+lossc+(3*lossr), s_weights,allow_unused=True))
+                grad_a = list(torch.autograd.grad(lossa+lossb+lossc+(self.lmb*lossr), s_weights,allow_unused=True))
                 for g in range(len(grad_a)):
                     if grad_a[g] is None:
                         pdb.set_trace()
