@@ -12,6 +12,7 @@ from scipy.stats import norm
 import torch.nn.functional as F
 from meta import Meta
 from aff_data import Affordances
+from copy import deepcopy
 
 def get_CAM(cam):
     cam = cam.reshape(14,14)
@@ -20,6 +21,74 @@ def get_CAM(cam):
     cam_img = cam / torch.max(cam)
     cam_img = np.uint8(255 * cam_img.cpu().detach().numpy())
     return cam_img
+
+def quaternion_matrix(quaternion):
+    ## From ROS TF transformations.py
+    _EPS = np.finfo(float).eps * 4.0
+    q = np.array(quaternion[:4], dtype=np.float64, copy=True)
+    nq = np.dot(q, q)
+    if nq < _EPS:
+        return np.identity(4)
+    q *= math.sqrt(2.0 / nq)
+    q = np.outer(q, q)
+    return np.array((
+        (1.0-q[1, 1]-q[2, 2],     q[0, 1]-q[2, 3],     q[0, 2]+q[1, 3], 0.0),
+        (    q[0, 1]+q[2, 3], 1.0-q[0, 0]-q[2, 2],     q[1, 2]-q[0, 3], 0.0),
+        (    q[0, 2]-q[1, 3],     q[1, 2]+q[0, 3], 1.0-q[0, 0]-q[1, 1], 0.0),
+        (                0.0,                 0.0,                 0.0, 1.0)
+        ), dtype=np.float64)
+
+def quaternion_from_matrix(matrix):
+    ## From ROS TF transformations.py
+    q = np.empty((4, ), dtype=np.float64)
+    M = np.array(matrix, dtype=np.float64, copy=False)[:4, :4]
+    t = np.trace(M)
+    if t > M[3, 3]:
+        q[3] = t
+        q[2] = M[1, 0] - M[0, 1]
+        q[1] = M[0, 2] - M[2, 0]
+        q[0] = M[2, 1] - M[1, 2]
+    else:
+        i, j, k = 0, 1, 2
+        if M[1, 1] > M[0, 0]:
+            i, j, k = 1, 2, 0
+        if M[2, 2] > M[i, i]:
+            i, j, k = 2, 0, 1
+        t = M[i, i] - (M[j, j] + M[k, k]) + M[3, 3]
+        q[i] = t
+        q[j] = M[i, j] + M[j, i]
+        q[k] = M[k, i] + M[i, k]
+        q[3] = M[k, j] - M[j, k]
+    q *= 0.5 / math.sqrt(t * M[3, 3])
+    return q
+
+def inverse_tf(p):
+    goal_tf = [0.075, 0.52, 0.06]
+    trans = p.pose.position
+    trans_m = np.identity(4)
+    # Put into goal space
+    trans_m[:3,3] = [trans.x-goal_tf[0], trans.y-goal_tf[1], trans.z-goal_tf[2]]
+
+    rot = p.pose.orientation
+    rot_m = quaternion_matrix([rot.x,rot.y,rot.z,rot.w])
+
+    G = np.identity(4)
+    G = np.dot(G, trans_m)
+    G = np.dot(G, rot_m)
+    # Inverse tf into ee space
+    inv = np.linalg.inv(G) #tr.inverse_matrix(inv)
+    trans_i = np.array(inv, copy=False)[:3, 3].copy() # tr.translation_from_matrix(inv)
+    rot_i = quaternion_from_matrix(inv)
+    pi = deepcopy(p)
+    pi.pose.position.x = trans_i[0]
+    pi.pose.position.y = trans_i[1]
+    pi.pose.position.z = trans_i[2]
+    pi.pose.orientation.x = rot_i[0]
+    pi.pose.orientation.y = rot_i[1]
+    pi.pose.orientation.z = rot_i[2]
+    pi.pose.orientation.w = rot_i[3]
+    return pi
+
 
 def main():
 
@@ -80,8 +149,10 @@ def main():
         print("-----Loading source demo " + str(demo_num) + "-----")
         tf_bag = rosbag.Bag(tf_path)
         tf_list = []
-        for topic, msg, t in tf_bag.read_messages(topics=['eef_pose_relative']):
-            tf_list.append(msg)
+        for topic, msg, t in tf_bag.read_messages(topics=['eef_pose_j2s7s300_link_base']):
+            tf_list.append(inverse_tf(msg))
+            #tf_list.append(msg)
+        pdb.set_trace()
         cam_path = os.path.expanduser("~") + '/data/cam/ex' + str(exclude_idx) + '/demo' + str(demo_num) + '/'
         if not os.path.exists(cam_path):
             os.makedirs(cam_path)
