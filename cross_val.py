@@ -15,28 +15,6 @@ from aff_data import Affordances
 from os.path import expanduser
 from torch import nn
 
-def get_CAM(cam):
-    cam = cam.reshape(14,14)
-    cam = torch.abs(cam)
-    cam = cam - torch.min(cam)
-    cam_img = cam / torch.max(cam)
-    cam_img = np.uint8(255 * cam_img.cpu().detach().numpy())
-    return cam_img
-
-def img_polar_tf(img):
-    d = int(img.shape[0]/2)
-    w = int(img.shape[0])
-    tf = np.zeros_like(img)
-    for i in range(img.shape[0]):
-        for j in range(img.shape[1]):
-            r = j/2
-            a = 2*np.pi*i/w
-            x = int(np.floor(r * math.cos(a))+d)
-            y = int(np.floor(r * math.sin(a))+d)
-            if x in range(w) and y in range(w):
-                tf[j,i] = img[x,y]
-    return tf
-
 def main():
 
     CLUSTER = True
@@ -47,11 +25,10 @@ def main():
         print("Loading input files...")
         with bz2.open(fts_loc, 'rb') as handle:
             inputs = pickle.load(handle)       #dict(img) = [[4096x1], ... ]
-        ex_list = ['saw', 'ladle', 'turner']
+        ex_list = ('saw', 'ladle', 'turner')
         rm_keys = [k for k in inputs.keys() if k.startswith(ex_list)]
         for k in rm_keys:
             inputs.pop(k, None)
-        pdb.set_trace()
         print("Done")
     else:
         inputs = None
@@ -147,7 +124,7 @@ def main():
     print(maml)
     print('Total trainable tensors:', num)
 
-    losses,training = [],[]
+    results_txt,losses,training = [],[],[]
     k_spt = args.k_spt * sample_size
     max_grad = 0
     for epoch in range(args.epoch):
@@ -170,30 +147,37 @@ def main():
             training.append(train_loss)
             max_grad = max(max_grad, grad)
 
+        #if epoch == 10000:  # evaluation
         if epoch % 1000 == 0:  # evaluation
             test_losses = []
-            batch_x,n_spt,batch_y,names,dist = db_test.next()
-            x_spt = batch_x[:,:k_spt,:]
-            y_spt = batch_y[:,:k_spt,:]
-            x_qry = batch_x[:,k_spt:,:]
-            y_qry = batch_y[:,k_spt:,:]
-            x_spt, y_spt, x_qry, y_qry, n_spt = torch.from_numpy(x_spt).float().to(device), torch.from_numpy(y_spt).float().to(device), \
-                                         torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device), torch.from_numpy(n_spt).float().to(device)
+            for _ in range(10):
+                batch_x,n_spt,batch_y,names,dist = db_test.next()
+                x_spt = batch_x[:,:k_spt,:]
+                y_spt = batch_y[:,:k_spt,:]
+                x_qry = batch_x[:,k_spt:,:]
+                y_qry = batch_y[:,k_spt:,:]
+                x_spt, y_spt, x_qry, y_qry, n_spt = torch.from_numpy(x_spt).float().to(device), torch.from_numpy(y_spt).float().to(device), \
+                                             torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device), torch.from_numpy(n_spt).float().to(device)
 
-            t = 0
-            for x_spt_one, y_spt_one, x_qry_one, y_qry_one, n_spt_one, names_one in zip(x_spt,y_spt,x_qry,y_qry,n_spt,names):
-                n_spt = names_one[:k_spt]
-                n_qry = names_one[k_spt:]
-                if args.meta == 1:
-                    loss,w,res = maml.class_finetuning(n_spt_one, x_spt_one,y_spt_one,x_qry_one,y_qry_one)
-                    test_losses.append(loss)
-                else:
-                    train_loss,test_loss,w,_ = maml.finetuning(x_spt_one.unsqueeze(0), y_spt_one.unsqueeze(0),x_qry_one.unsqueeze(0),y_qry_one.unsqueeze(0))
-                    test_losses.append(test_loss)
-                t+=1
+                t = 0
+                for x_spt_one, y_spt_one, x_qry_one, y_qry_one, n_spt_one, names_one in zip(x_spt,y_spt,x_qry,y_qry,n_spt,names):
+                    n_spt = names_one[:k_spt]
+                    n_qry = names_one[k_spt:]
+                    if args.meta == 1:
+                        loss,w,res = maml.class_finetuning(n_spt_one, x_spt_one,y_spt_one,x_qry_one,y_qry_one)
+                        test_losses.append(loss)
+                    else:
+                        train_loss,test_loss,w,_ = maml.finetuning(x_spt_one.unsqueeze(0), y_spt_one.unsqueeze(0),x_qry_one.unsqueeze(0),y_qry_one.unsqueeze(0))
+                        test_losses.append(test_loss)
+                    t+=1
 
             print('Test Loss:', np.array(test_losses).mean(axis=0))
-            
+            results_txt.append("%0.6f" % (np.array(test_losses).mean(axis=0)[-1]))
+    results_file = home + "/data/cross_val/ex" + str(args.exclude) + "_lmb" + str(args.lmb) + ".txt"
+    out_file = open(results_file, "a+")
+    out_file.write(("%0.3f" % args.update_lr) + ", " + ("%0.5f" % args.meta_lr) + ", " + str(results_txt) + '\n')
+    out_file.close()
+    
 
 
 if __name__ == '__main__':
