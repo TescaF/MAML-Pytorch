@@ -62,6 +62,10 @@ class Affordances:
                 aff_loc = "/home/tesca/data/part-affordance-dataset/features/" + mode + "_aff_" + str(aff) + "_positions.pkl"
             with open(aff_loc, 'rb') as handle:
                 aff_data = pickle.load(handle)      #dict(category) = [img1, img2, ...]
+            aff_keys = list(aff_data.keys())
+            for k in aff_keys:
+                if k not in self.all_keys:
+                    aff_data.pop(k, None)
 
             keys = list(sorted(aff_data.keys()))
             if exclude >= 0:
