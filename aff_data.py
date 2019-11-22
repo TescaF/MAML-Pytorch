@@ -125,9 +125,13 @@ class Affordances:
             aff_num = self.rand.choice(len(valid_affs))
             valid_keys, aff_data = self.affs[valid_affs[aff_num]]
             obj_keys = list(sorted(set([k.split("_00")[0] for k in valid_keys if k.startswith(cat)])))
-            tf_a = self.rand.uniform(-np.pi/4.0,np.pi/4.0)
+            tf_a = self.rand.uniform(-np.pi,np.pi)
             tf_r = self.rand.uniform(-0.5,0.5)
             tf_z = self.rand.uniform(-0.5,0.5)
+            ## Investigate whether z is used for training
+            ## Investigate best range for a and r
+            ## Re-evaluate r after x and a are selected
+            ## Change in a should be wrt existing a?
             k = self.rand.choice(len(obj_keys), self.num_samples_per_class, replace=False)
             for n in range(self.num_samples_per_class):
                 negative_keys = list([key for key in self.valid_keys if key.startswith(self.categories[neg_cats[n]])])
@@ -143,10 +147,10 @@ class Affordances:
                     pt1 = np.array(aff_data[sample_keys[sk[s]]][-1])
                     pt = pt1 - self.center
                     r1 = np.sqrt(pt[0]**2 + pt[1]**2)
-                    r = r1 * (1+tf_r)
-                    a = math.atan2(pt[1],pt[0]) + tf_a
-                    tf_out_x = self.center[0] + (r * math.cos(a))
-                    tf_out_y = self.center[1] + (r * math.sin(a))
+                    #r = r1 * (1+tf_r)
+                    #a = math.atan2(pt[1],pt[0]) + tf_a
+                    tf_out_x = self.center[0] + pt[0] + (tf_r * math.cos(tf_a))
+                    tf_out_y = self.center[1] + pt[1] + (tf_r * math.sin(tf_a))
                     tf_out_z = pt[2] * (1+tf_z)
                     out = self.output_scale.transform(np.array([tf_out_x,tf_out_y,tf_out_z])[:self.dim_output].reshape(1,-1)).squeeze()[:self.dim_output]
                     #if not self.train:
@@ -240,7 +244,7 @@ class Affordances:
 
         # Project TF x and y
         tf_x = tf.pose.position.x 
-        tf_y = tf.pose.position.z
+        tf_y = -tf.pose.position.z
         tf_z = tf.pose.position.y
         tf_r = math.sqrt(tf_x**2.0 + tf_y**2.0)
         tf_ang = math.atan2(tf_y, tf_x)
@@ -268,7 +272,7 @@ class Affordances:
         pt_r = np.linalg.norm(inv_pt)
         pt_ang = math.atan2(inv_pt[1], inv_pt[0])
         a = align_normal - pt_ang
-        ee = [math.cos(a) * pt_r, math.sin(a) * pt_r]
+        ee = [math.cos(a) * pt_r, -math.sin(a) * pt_r]
 
         return ee
 

@@ -108,6 +108,8 @@ def main():
     sample_size = args.sample_size # number of images per object
 
     db_tune = Affordances(
+                       CLUSTER=False,
+                       inputs=inputs,
                        mode="center",
                        train=False,
                        batchsz=1,
@@ -152,7 +154,6 @@ def main():
         for topic, msg, t in tf_bag.read_messages(topics=['eef_pose_j2s7s300_link_base']):
             tf_list.append(inverse_tf(msg))
             #tf_list.append(msg)
-        pdb.set_trace()
         cam_path = os.path.expanduser("~") + '/data/cam/ex' + str(exclude_idx) + '/demo' + str(demo_num) + '/'
         if not os.path.exists(cam_path):
             os.makedirs(cam_path)
@@ -228,6 +229,7 @@ if __name__ == '__main__':
     argparser.add_argument('--k_spt', type=int, help='k shot for support set', default=1)
     argparser.add_argument('--k_qry', type=int, help='k shot for query set', default=3)
     argparser.add_argument('--meta_lr', type=float, help='meta-level outer learning rate', default=0.0001)
+    argparser.add_argument('--lmb', type=float, help='task-level inner update learning rate', default=3.0)
     argparser.add_argument('--update_lr', type=float, help='task-level inner update learning rate', default=0.1)
     argparser.add_argument('--update_step', type=int, help='task-level inner update steps', default=5)
     argparser.add_argument('--update_step_test', type=int, help='update steps for finetunning', default=10)

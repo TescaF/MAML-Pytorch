@@ -59,19 +59,23 @@ def main():
         #comp_pt = base_to_ee(kf_list[args.kf][0]).pose.position
         diff_x = tfs[args.kf][0] - comp_pt.x
         diff_y = tfs[args.kf][1] - comp_pt.z
-
+        print("Diff: " + str(diff_x) + ", " + str(diff_y))
         print("-----Writing bags-----")
         out_path = os.path.expanduser("~") + '/data/bags/tfd/src_' + args.src + '_demo' + str(demo_num) + '_kf' + str(args.kf) + '_to_tgt_' + args.tgt + '.bag'
         with rosbag.Bag(out_path, 'w') as out_bag:
-            for kf in kf_list:
-                trans = kf[0].pose.position
-                rot = kf[0].pose.orientation
+            for kf_i in range(len(kf_list)):
+                trans = kf_list[kf_i][0].pose.position
+                rot = kf_list[kf_i][0].pose.orientation
+                tmp_diff_x = tfs[kf_i][0] - trans.x
+                tmp_diff_y = tfs[kf_i][1] - trans.z
+                print("Diff: " + str(tmp_diff_x) + ", " + str(tmp_diff_y))
+
                 #inv = tr.concatenate_matrices(tr.translation_matrix((-0.009,-0.304,-0.032)), tr.quaternion_matrix((-0.512,-0.383,-0.468,0.61)))
                 inv = tr.concatenate_matrices(tr.translation_matrix((trans.x+diff_x,trans.y,trans.z+diff_y)), tr.quaternion_matrix((rot.x,rot.y,rot.z,rot.w)))
                 inv = tr.inverse_matrix(inv)
                 trans_i = tr.translation_from_matrix(inv)
                 rot_i = tr.quaternion_from_matrix(inv)
-                pi = deepcopy(kf[0])
+                pi = deepcopy(kf_list[kf_i][0])
                 pi.pose.position.x = trans_i[0] + goal_tf[0]
                 pi.pose.position.y = trans_i[1] + goal_tf[1]
                 pi.pose.position.z = trans_i[2] + goal_tf[2]
@@ -80,8 +84,8 @@ def main():
                 pi.pose.orientation.z = rot_i[2]
                 pi.pose.orientation.w = rot_i[3]
                 pi.header.frame_id = "j2s7s300_link_base"
-                out_bag.write('eef_pose_j2s7s300_link_base', pi, kf[1])
-                out_bag.write('eef_pose_relative', pi, kf[1])
+                out_bag.write('eef_pose_j2s7s300_link_base', pi, kf_list[kf_i][1])
+                out_bag.write('eef_pose_relative', pi, kf_list[kf_i][1])
             for m in msgs:
                 out_bag.write(m[0], m[1], m[2])
 
