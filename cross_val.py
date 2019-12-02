@@ -167,13 +167,13 @@ def main():
                         loss,w,_ = maml.class_finetuning(n_spt_one, x_spt_one,y_spt_one,x_qry_one,y_qry_one)
                         test_losses.append(loss)
                     else:
-                        train_loss,test_loss,w,_ = maml.finetuning(x_spt_one.unsqueeze(0), y_spt_one.unsqueeze(0),x_qry_one.unsqueeze(0),y_qry_one.unsqueeze(0))
-                        test_losses.append(test_loss)
+                        loss,w,_ = maml.finetuning(x_spt_one, y_spt_one,x_qry_one,y_qry_one)
+                        test_losses.append(loss)
                     t+=1
 
             print('Test Loss:', np.array(test_losses).mean(axis=0))
             results_txt.append("%0.6f" % (np.array(test_losses).mean(axis=0)[-1]))
-    results_file = home + "/data/cross_val/ex" + str(args.exclude) + "_lmb" + str(args.lmb) + ".txt"
+    results_file = home + "/data/cross_val/meta" + str(args.meta) + "_ex" + str(args.exclude) + "_lmb" + str(args.lmb) + ".txt"
     out_file = open(results_file, "a+")
     out_file.write(("%0.3f" % args.update_lr) + ", " + ("%0.5f" % args.meta_lr) + ", " + str(results_txt) + '\n')
     out_file.close()

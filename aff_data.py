@@ -89,8 +89,7 @@ class Affordances:
         self.valid_keys = list(sorted(set(self.valid_keys)))
         self.classes = list(sorted(set([k.split("_00")[0] for k in self.valid_keys])))
         self.num_classes = len(set([k.split("_00")[0] for k in self.valid_keys]))
-        
-        self.num_samples_per_class = k_shot + k_qry
+       
         self.batch_size = batchsz
         self.dim_output = dim_out
         self.dim_input = len(list(self.inputs.values())[0])
@@ -100,6 +99,10 @@ class Affordances:
         #self.output_scale.fit(np.concatenate(all_vals)[:,self.dim_output])
         self.center = np.array([240,320,0])
         all_objs = list(sorted(set([k.split("_00")[0] for k in self.valid_keys])))
+        if k_qry == -1:
+            self.num_samples_per_class = len([o for o in all_objs if o.startswith(categories[exclude])])
+        else:
+            self.num_samples_per_class = k_shot + k_qry
         self.categories = list(sorted(set([k1.split("_")[0] for k1 in all_objs if sum([o.startswith(k1.split("_")[0]) for o in all_objs]) >= self.num_samples_per_class])))
         print(self.categories)
 
@@ -131,6 +134,7 @@ class Affordances:
             valid_keys, aff_data = self.affs[valid_affs[aff_num]]
             obj_keys = list(sorted(set([k.split("_00")[0] for k in valid_keys if k.startswith(cat)])))
             tf_a = self.rand.uniform(-np.pi,np.pi)
+            max_r = math.sqrt(480.0**2.0 + 640.0**2.0)/2.0
             tf_r = self.rand.uniform(-0.5,0.5)
             tf_z = self.rand.uniform(-0.5,0.5)
             ## Investigate whether z is used for training
@@ -142,6 +146,8 @@ class Affordances:
                 negative_keys = list([key for key in self.valid_keys if key.startswith(self.categories[neg_cats[n]])])
                 nk = self.rand.choice(len(negative_keys), self.sample_size, replace=False)
                 sample_keys = list([key for key in valid_keys if key.startswith(obj_keys[k[n]])])
+                if len(sample_keys) < self.sample_size:
+                        pdb.set_trace()
                 sk = self.rand.choice(len(sample_keys), self.sample_size, replace=False)
                 for s in range(self.sample_size):
                     neg_fts = self.inputs[negative_keys[nk[s]]]
@@ -153,9 +159,9 @@ class Affordances:
                     pt = pt1 - self.center
                     r1 = np.sqrt(pt[0]**2 + pt[1]**2)
                     #r = r1 * (1+tf_r)
-                    #a = math.atan2(pt[1],pt[0]) + tf_a
-                    tf_out_x = self.center[0] + pt[0] + (tf_r * math.cos(tf_a))
-                    tf_out_y = self.center[1] + pt[1] + (tf_r * math.sin(tf_a))
+                    a = math.atan2(pt[1],pt[0]) + tf_a
+                    tf_out_x = self.center[0] + pt[0] + (max_r * tf_r * math.cos(a))
+                    tf_out_y = self.center[1] + pt[1] + (max_r * tf_r * math.sin(a))
                     tf_out_z = pt[2] * (1+tf_z)
                     out = self.output_scale.transform(np.array([tf_out_x,tf_out_y,tf_out_z])[:self.dim_output].reshape(1,-1)).squeeze()[:self.dim_output]
                     #if not self.train:
