@@ -1,3 +1,4 @@
+import cv2 as cv
 import sklearn.cluster
 from sklearn.linear_model import LinearRegression
 import scipy
@@ -177,7 +178,7 @@ class Affordances:
         qry_inputs = np.zeros([self.num_samples_per_class * self.sample_size, 14,14,1024])
         neg_inputs = np.zeros([self.num_samples_per_class * self.sample_size, 14,14,1024])
         outputs = np.zeros([self.num_samples_per_class * self.sample_size, self.dim_output])
-        spt_output_list,qry_output_list,qry_input_list,spt_input_list,negative_list,sel_keys,cart_out = [],[],[],[],[],[],[]
+        spt_output_list,qry_output_list,qry_input_list,spt_input_list,negative_list,qry_keys,cart_out = [],[],[],[],[],[],[]
 
         # Get spt/qry object category name
         cat = name_spt.split("_")[0]
@@ -203,22 +204,24 @@ class Affordances:
             for s in range(self.sample_size):
                 neg_fts = self.inputs[negative_keys[nk[s]]]
                 negative_list.append(neg_fts.reshape((1024,14,14)).transpose())
-                sel_keys.append(sample_keys[sk[s]])
                 fts = self.inputs[sample_keys[sk[s]]]
                 if sample_keys[sk[s]].startswith(name_spt):
                     out = self.apply_tf_wrt_grasp(sample_keys[sk[s]], tf)
                     im = sample_keys[sk[s]]
                     spt_output_list.append(out)
                     spt_input_list.append(fts.reshape((1024,14,14)).transpose())
+                    qry_output_list.append(np.matrix([0,0]))
+                    qry_input_list.append(fts.reshape((1024,14,14)).transpose())
                 else:
                     qry_output_list.append(np.matrix([0,0]))
                     qry_input_list.append(fts.reshape((1024,14,14)).transpose())
+                qry_keys.append(sample_keys[sk[s]])
         spt_inputs = np.stack(spt_input_list)
         qry_inputs = np.stack(qry_input_list)
         neg_inputs = np.stack(negative_list)
         spt_outputs = np.stack(spt_output_list)
         qry_outputs = np.stack(qry_output_list)
-        return spt_inputs, qry_inputs, neg_inputs, spt_outputs, qry_outputs, sel_keys
+        return spt_inputs, qry_inputs, neg_inputs, spt_outputs, qry_outputs, qry_keys
 
         # Get support images
         # For each support image, get centroid and direction of grasp
@@ -232,17 +235,27 @@ class Affordances:
         img_affs = label['gt_label']
 
         grasp_pts = np.matrix([(i,j) for i in range(img_affs.shape[0]) for j in range(img_affs.shape[1]) if img_affs[i,j] == 1])
+        clusters = sklearn.cluster.DBSCAN(eps=3, min_samples=20).fit_predict(grasp_pts)
+        grasp_clust = [grasp_pts[i] for i in range(len(grasp_pts)) if clusters[i] > -1]
+        cy, cx = np.median(grasp_clust,axis=0).squeeze(0)
+
         aff_pts = np.matrix([(i,j) for i in range(img_affs.shape[0]) for j in range(img_affs.shape[1]) if img_affs[i,j] > 1])
-        clusters = sklearn.cluster.DBSCAN(eps=3, min_samples=5).fit_predict(aff_pts)
+        clusters = sklearn.cluster.DBSCAN(eps=3, min_samples=20).fit_predict(aff_pts)
+        aff_clust = [aff_pts[i] for i in range(len(aff_pts)) if clusters[i] > -1]
+        ay, ax = np.median(aff_clust,axis=0).squeeze(0)
+
 
         # Get edge normal
         reg = LinearRegression().fit(grasp_pts[:,0], grasp_pts[:,1])
         normal = math.atan(reg.coef_) #+ math.pi/2.0
 
         ## Pick TF direction that minimizes distance from aff points mean
-        mean_aff = np.multiply(np.mean(aff_pts,axis=0) * self.px_to_cm, self.cm_to_std) - 1.0
-        mean_grasp = np.multiply(np.mean(grasp_pts,axis=0) * self.px_to_cm, self.cm_to_std) - 1.0
-        comp_ang = math.atan2(mean_aff[0,1]-mean_grasp[0,1],mean_aff[0,0]-mean_grasp[0,0])
+        mean_aff_old = np.multiply(np.mean(aff_pts,axis=0) * self.px_to_cm, self.cm_to_std) - 1.0
+        mean_aff = np.multiply(np.array([ay,ax]) * self.px_to_cm, self.cm_to_std) - 1.0
+        mean_grasp_old = np.multiply(np.mean(grasp_pts,axis=0) * self.px_to_cm, self.cm_to_std) - 1.0
+        mean_grasp = np.multiply(np.array([cy,cx]) * self.px_to_cm, self.cm_to_std) - 1.0
+        comp_ang = math.atan2(mean_aff[1]-mean_grasp[1],mean_aff[0]-mean_grasp[0])
+        #comp_ang = math.atan2(mean_aff[0,1]-mean_grasp[0,1],mean_aff[0,0]-mean_grasp[0,0])
         cand_ang = np.array([normal, normal-np.pi, normal+np.pi])
         align_normal = cand_ang[np.argmin(np.absolute(cand_ang - comp_ang))]
 
@@ -253,8 +266,17 @@ class Affordances:
         tf_r = math.sqrt(tf_x**2.0 + tf_y**2.0)
         tf_ang = math.atan2(tf_y, tf_x)
         a = tf_ang + align_normal
-        ee = [math.cos(a) * tf_r * 100.0 * self.cm_to_std[0], math.sin(a) * tf_r * 100.0 * self.cm_to_std[1]]
-        return ee
+        ee_std = [math.cos(a) * tf_r * 100.0 * self.cm_to_std[0], math.sin(a) * tf_r * 100.0 * self.cm_to_std[1]]
+        ee_inv = self.inverse_project(img_name, ee_std)
+        #print(str([tf.pose.position.x,tf.pose.position.z]) + " -> " + str(ee_inv))
+        ee = self.output_scale.inverse_transform(np.array(ee_std).reshape(1,-1)).squeeze(0)
+
+        '''img = cv.imread('/home/tesca/data/part-affordance-dataset/center_tools/' + img_name + '_center.jpg')
+        cv.circle(img,(int(ee[1]),int(ee[0])),5,[255,255,0])
+        cv.circle(img,(int(pos[1]),int(pos[0])),5,[255,255,0])
+        cv.imshow("img",img)
+        cv.waitKey(0)'''
+        return ee_std
 
     def inverse_project(self, img_name, pt):
         label = scipy.io.loadmat(self.aff_dir + img_name.split("_00")[0] + "/" + img_name + "_label.mat")
@@ -276,7 +298,7 @@ class Affordances:
         pt_r = np.linalg.norm(inv_pt)
         pt_ang = math.atan2(inv_pt[1], inv_pt[0])
         a = align_normal - pt_ang
-        ee = [math.cos(a) * pt_r, -math.sin(a) * pt_r]
+        ee = [math.cos(a) * pt_r, math.sin(a) * pt_r]
 
         return ee
 

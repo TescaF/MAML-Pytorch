@@ -164,7 +164,7 @@ def main():
                     n_spt = names_one[:k_spt]
                     n_qry = names_one[k_spt:]
                     if args.meta == 1:
-                        loss,w,res = maml.class_finetuning(n_spt_one, x_spt_one,y_spt_one,x_qry_one,y_qry_one)
+                        loss,w,_ = maml.class_finetuning(n_spt_one, x_spt_one,y_spt_one,x_qry_one,y_qry_one)
                         test_losses.append(loss)
                     else:
                         train_loss,test_loss,w,_ = maml.finetuning(x_spt_one.unsqueeze(0), y_spt_one.unsqueeze(0),x_qry_one.unsqueeze(0),y_qry_one.unsqueeze(0))

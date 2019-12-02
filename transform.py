@@ -31,7 +31,7 @@ def base_to_ee(pt):
 
 def main():
     demo_num = 1
-    tf_path = os.path.expanduser("~") + '/data/bags/' + args.src + "_" + str(demo_num) + ".bag"
+    tf_path = os.path.expanduser("~") + '/test_bagfiles/' + args.src + "_t" + str(args.t) + "_" + str(demo_num) + ".bag"
     while os.path.exists(tf_path):
         print("-----Loading source demo " + str(demo_num) + "-----")
         tf_bag = rosbag.Bag(tf_path)
@@ -44,31 +44,38 @@ def main():
                 msgs.append([topic, msg, t])
         
         print("-----Loading transforms-----")
-        tf_file = os.path.expanduser("~") + "/data/output/src_" + args.src + "-demo_" + str(demo_num) + "-tgt_" + args.tgt + ".txt"
+        tf_file = os.path.expanduser("~") + "/data/output/src_" + args.src + "-demo_" + str(demo_num) + "-tgt_" + args.tgt + "-t_" + str(args.t) + ".txt"
         with open(tf_file, 'r') as in_file:
             lines = [line.strip() for line in in_file]
-        tfs,tf_poses = [],[]
+        tfs,tf_poses,losses,diffs = [],[],[],[]
 
         ## Get TF to apply to keyframes
         for kf_i in range(len(lines)/3):
             data = lines[(kf_i * 3) + 1]
+            loss = float(data.split("] [")[0].split("[")[1])
             median = [float(m) for m in data.split("] [")[1].split()]
+            losses.append(loss ** 2.0)
             tfs.append(median)
-        
-        comp_pt = kf_list[args.kf][0].pose.position
+            comp_pt = kf_list[kf_i][0].pose.position
+            diff_x = median[0] - comp_pt.x
+            diff_y = median[1] + comp_pt.z
+            diffs.append(np.array([diff_x,diff_y]))
+        loss_norm = np.sum(1.0/np.array(losses[1:]))
+        loss_w = 1.0 / (np.array(losses[1:]) * loss_norm)
+        w_diffs = np.multiply(np.stack(diffs[1:]).transpose(), loss_w)
+        diff_x, diff_y = w_diffs.transpose().sum(axis=0).tolist()
+        pdb.set_trace()
         #comp_pt = base_to_ee(kf_list[args.kf][0]).pose.position
-        diff_x = tfs[args.kf][0] - comp_pt.x
-        diff_y = tfs[args.kf][1] - comp_pt.z
-        print("Diff: " + str(diff_x) + ", " + str(diff_y))
+        print("Diff: " + str([diff_x,diff_y]))
         print("-----Writing bags-----")
-        out_path = os.path.expanduser("~") + '/data/bags/tfd/src_' + args.src + '_demo' + str(demo_num) + '_kf' + str(args.kf) + '_to_tgt_' + args.tgt + '.bag'
+        out_path = os.path.expanduser("~") + '/data/bags/tfd/src_' + args.src + '_demo' + str(demo_num) + '_kf' + str(args.kf) + '_to_tgt_' + args.tgt + '_t' + str(args.t) + '.bag'
         with rosbag.Bag(out_path, 'w') as out_bag:
             for kf_i in range(len(kf_list)):
                 trans = kf_list[kf_i][0].pose.position
                 rot = kf_list[kf_i][0].pose.orientation
-                tmp_diff_x = tfs[kf_i][0] - trans.x
-                tmp_diff_y = tfs[kf_i][1] - trans.z
-                print("Diff: " + str(tmp_diff_x) + ", " + str(tmp_diff_y))
+                #tmp_diff_x = tfs[kf_i][0] - trans.x
+                #tmp_diff_y = tfs[kf_i][1] - trans.z
+                #print("Diff: " + str(tmp_diff_x) + ", " + str(tmp_diff_y))
 
                 #inv = tr.concatenate_matrices(tr.translation_matrix((-0.009,-0.304,-0.032)), tr.quaternion_matrix((-0.512,-0.383,-0.468,0.61)))
                 inv = tr.concatenate_matrices(tr.translation_matrix((trans.x+diff_x,trans.y,trans.z+diff_y)), tr.quaternion_matrix((rot.x,rot.y,rot.z,rot.w)))
@@ -90,7 +97,7 @@ def main():
                 out_bag.write(m[0], m[1], m[2])
 
         demo_num += 1
-        tf_path = os.path.expanduser("~") + '/data/bags/' + args.src + "_" + str(demo_num) + ".bag"
+        tf_path = os.path.expanduser("~") + '/test_bagfiles/' + args.src + "_t" + str(args.t) + "_" + str(demo_num) + ".bag"
 
 if __name__ == '__main__':
 
@@ -98,6 +105,7 @@ if __name__ == '__main__':
     argparser.add_argument('--src', type=str, help='epoch number', default="")
     argparser.add_argument('--tgt', type=str, help='epoch number', default="")
     argparser.add_argument('--kf', type=int, help='epoch number', default=10)
+    argparser.add_argument('--t', type=int, help='epoch number', default=10)
 
     args = argparser.parse_args()
 

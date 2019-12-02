@@ -63,7 +63,20 @@ def quaternion_from_matrix(matrix):
     return q
 
 def inverse_tf(p):
-    goal_tf = [0.075, 0.52, 0.06]
+    if args.name.startswith("ladle"):
+        if args.t == 1:
+            goal_tf = [0.039,0.442,0.04]
+        elif args.t == 2:
+            goal_tf = [-0.132,0.74,0.38]
+    if args.name.startswith("saw"):
+        if args.t == 1:
+            goal_tf = [-0.182,0.645,-0.009]
+        elif args.t == 2:
+            goal_tf = [0.005,-0.451,0.38]
+    if args.name.startswith("turner"):
+        if args.t == 1:
+            goal_tf = [-0.184,0.63,-0.025]
+
     trans = p.pose.position
     trans_m = np.identity(4)
     # Put into goal space
@@ -136,7 +149,7 @@ def main():
     maml.loss_fn = maml.avg_loss
 
     ## Load model
-    load_path = os.path.expanduser("~") + '/data/models/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_exclude' + str(exclude_idx) + '_epoch0_meta1_polar0.pt'
+    load_path = os.path.expanduser("~") + '/data/models/model_tasksz' + str(args.task_num) + '_batchsz' + str(args.k_spt) + '_lr' + str(args.update_lr) + '_mr' + str(args.meta_lr) + '_lambda' + str(args.lmb) + '_exclude' + str(exclude_idx) + '_epoch0_meta1_polar0.pt'
     maml.load_state_dict(torch.load(load_path))
     maml.eval()
     tmp = filter(lambda x: x.requires_grad, maml.parameters())
@@ -146,7 +159,8 @@ def main():
 
     ## Load TFs for y_spt
     demo_num = 1
-    tf_path = os.path.expanduser("~") + '/data/bags/' + args.name + "_" + str(demo_num) + ".bag"
+    tf_path = os.path.expanduser("~") + '/test_bagfiles/' + args.name + '_t' + str(args.t) + "_" + str(demo_num) + ".bag"
+    #tf_path = os.path.expanduser("~") + '/data/bags/' + args.name + "_" + str(demo_num) + ".bag"
     while os.path.exists(tf_path):
         print("-----Loading source demo " + str(demo_num) + "-----")
         tf_bag = rosbag.Bag(tf_path)
@@ -161,17 +175,17 @@ def main():
         tf_i = 0 
         out_txt,tf_pred,obj_names = [],[],[]
         for tf in tf_list:
-            x_spt,x_qry,n_spt,y_spt,y_qry,names = db_tune.project_tf(args.name, tf)
+            x_spt,x_qry,n_spt,y_spt,y_qry,names_qry = db_tune.project_tf(args.name, tf)
             x_spt, y_spt, x_qry, y_qry, n_spt = torch.from_numpy(x_spt).float().to(device), torch.from_numpy(y_spt).float().to(device), \
                                                  torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device), torch.from_numpy(n_spt).float().to(device)
-            names_spt = names[:x_spt.shape[0]]
-            names_qry = names[x_spt.shape[0]:]
-            loss,w,acc,res = maml.class_tune2(n_spt, x_spt,y_spt,x_qry,y_qry)
-            print("KF " + str(tf_i) + " training loss: " + str(np.array([loss])))
+            loss,w,_,res = maml.class_tune3(n_spt, x_spt,y_spt,x_qry,y_qry)
+            print("KF " + str(tf_i) + " training loss: " + str(np.array(loss)))
+            inv_spt = db_tune.inverse_project(names_qry[21],res[21].cpu().detach().numpy())
+            print(str([tf.pose.position.x,tf.pose.position.z]) + " vs " + str(inv_spt))
             for i in range(len(names_qry)):
                 pred = res[i].cpu().detach().numpy()
                 inv_tf = db_tune.inverse_project(names_qry[i],res[i].cpu().detach().numpy())
-                #print(names_qry[i] + ": " + str(inv_tf))
+                #print(names_qry[i] + " - " + str(pred) + " - " + str(inv_tf))
                 obj_idx = int(np.floor(i/args.sample_size))
                 if len(out_txt) <= obj_idx:
                     out_txt.append([])
@@ -183,7 +197,10 @@ def main():
                 out_txt[obj_idx][tf_i] += names_qry[i] + ',' + ('%s;' % ','.join(map(str,inv_tf)))
                 tf_pred[obj_idx][tf_i].append(inv_tf)
                 cam1 = get_CAM(w[0][i])
-                pos = [(pred[0] + 1) / (db_tune.px_to_cm * db_tune.cm_to_std[0]), (pred[1] + 1) / (db_tune.px_to_cm * db_tune.cm_to_std[1])]
+                pos1 = [(pred[0] + 1) / (db_tune.px_to_cm * db_tune.cm_to_std[0]), (pred[1] + 1) / (db_tune.px_to_cm * db_tune.cm_to_std[1])]
+                pos = db_tune.output_scale.inverse_transform(np.array(pred).reshape(1,-1)).squeeze(0)
+
+                #print(names_qry[i] + ": " + str(pos1) + " " + str(pos))
 
                 img = cv.imread('/home/tesca/data/part-affordance-dataset/center_tools/' + names_qry[i] + '_center.jpg')
                 if img is not None:
@@ -205,7 +222,7 @@ def main():
         for tgt_i in range(len(out_txt)):
             tgt = out_txt[tgt_i]
             name = obj_names[tgt_i]
-            file_out = os.path.expanduser("~") + '/data/output/src_' + args.name + "-demo_" + str(demo_num) + "-tgt_" + name + ".txt"
+            file_out = os.path.expanduser("~") + '/data/output/src_' + args.name + "-demo_" + str(demo_num) + "-tgt_" + name + "-t_" + str(args.t) + ".txt"
             f = open(file_out, "w")
             for kf_i in range(len(tgt)):
                 kf = tgt[kf_i]
@@ -219,13 +236,16 @@ def main():
                 #f.write('%s' % ','.join(map(str,median_tf)) + '\n')
             f.close()
         demo_num += 1
-        tf_path = os.path.expanduser("~") + '/data/bags/' + args.name + "_" + str(demo_num) + ".bag"
+        #tf_path = os.path.expanduser("~") + '/data/bags/' + args.name + "_" + str(demo_num) + ".bag"
+        tf_path = os.path.expanduser("~") + '/test_bagfiles/' + args.name + '_t' + str(args.t) + "_" + str(demo_num) + ".bag"
 
 if __name__ == '__main__':
 
     argparser = argparse.ArgumentParser()
     argparser.add_argument('--name', type=str, help='epoch number', default="")
     argparser.add_argument('--sample_size', type=int, help='epoch number', default=10)
+    argparser.add_argument('--task_num', type=int, help='epoch number', default=5)
+    argparser.add_argument('--t', type=int, help='epoch number', default=5)
     argparser.add_argument('--k_spt', type=int, help='k shot for support set', default=1)
     argparser.add_argument('--k_qry', type=int, help='k shot for query set', default=3)
     argparser.add_argument('--meta_lr', type=float, help='meta-level outer learning rate', default=0.0001)
