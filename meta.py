@@ -429,12 +429,17 @@ class Meta(nn.Module):
 
     def class_tune3(self, n_spt, x_spt, y_spt, x_qry, y_qry,debug=False):
         task_num = x_spt.size(0)
-        train_corrects = [0 for _ in range(self.update_step_test)]
+        test_corrects = [0 for _ in range(self.update_step_test + 1)]
         loss_fn = nn.BCEWithLogitsLoss()
         hook = len(list(self.net.parameters()))-1
 
         net = deepcopy(self.net)
         s_weights = net.parameters()
+
+        with torch.no_grad():
+            logits_q = net(x_qry, vars=s_weights, bn_training=True, hook=hook)
+            loss_q = self.loss_fn(logits_q, y_qry)
+            test_corrects[0] += loss_q.item()
 
         for k in range(self.update_step_test):
             ## Get classification loss
@@ -448,7 +453,7 @@ class Meta(nn.Module):
             ## Get location loss
             logits_r = net(x_spt, vars=s_weights, bn_training=True, hook=hook)
             lossr = self.loss_fn(logits_r, y_spt)
-            train_corrects[k] += lossr.item()
+            #train_corrects[k] += lossr.item()
 
             ## Update weights
             grad_a = list(torch.autograd.grad(lossa+lossb+lossc+(self.lmb*lossr), s_weights,allow_unused=True))
@@ -458,6 +463,12 @@ class Meta(nn.Module):
                     pdb.set_trace()
                     grad_a[g] = torch.zeros_like(s_weights[g])
             s_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad_a, s_weights)))  
+
+            with torch.no_grad():
+                logits_q = net(x_qry, vars=s_weights, bn_training=True, hook=hook)
+                loss_q = self.loss_fn(logits_q, y_qry)
+                test_corrects[k+1] += loss_q.item()
+
             del lossa, lossb, lossc, lossr, grad_a, logits_a, logits_b, logits_c, logits_r
 
         spt_logits = net(x_spt, vars=s_weights, bn_training=True, hook=hook)
@@ -468,7 +479,7 @@ class Meta(nn.Module):
         cam_vals2 = net(x_qry,vars=s_weights,bn_training=True,hook=hook-2,debug=debug)
         pred = self.avg_pred(qry_logits)
         del qry_logits, spt_logits, s_weights
-        return loss, [cam_vals2],  np.array(train_corrects)/task_num, pred
+        return loss, [cam_vals2],  np.array(test_corrects), pred
 
 def main():
     pass

@@ -164,7 +164,7 @@ def main():
                     n_spt = names_one[:k_spt]
                     n_qry = names_one[k_spt:]
                     if args.meta == 1:
-                        loss,w,_ = maml.class_finetuning(n_spt_one, x_spt_one,y_spt_one,x_qry_one,y_qry_one)
+                        loss,w,_,_ = maml.class_tune3(n_spt_one, x_spt_one,y_spt_one,x_qry_one,y_qry_one)
                         test_losses.append(loss)
                     else:
                         loss,w,_ = maml.finetuning(x_spt_one, y_spt_one,x_qry_one,y_qry_one)
@@ -172,7 +172,8 @@ def main():
                     t+=1
 
             print('Test Loss:', np.array(test_losses).mean(axis=0))
-            results_txt.append("%0.6f" % (np.array(test_losses).mean(axis=0)[-1]))
+            results_txt.append("%0.6f" % (np.array(test_losses).mean(axis=0)))
+            #results_txt.append("%0.6f" % (np.array(test_losses).mean(axis=0)[-1]))
     results_file = home + "/data/cross_val/meta" + str(args.meta) + "_ex" + str(args.exclude) + "_lmb" + str(args.lmb) + ".txt"
     out_file = open(results_file, "a+")
     out_file.write(("%0.3f" % args.update_lr) + ", " + ("%0.5f" % args.meta_lr) + ", " + str(results_txt) + '\n')
