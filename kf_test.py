@@ -180,11 +180,11 @@ def main():
                                                  torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device), torch.from_numpy(n_spt).float().to(device)
             loss,w,_,res = maml.class_tune3(n_spt, x_spt,y_spt,x_qry,y_qry)
             print("KF " + str(tf_i) + " training loss: " + str(np.array(loss)))
-            inv_spt = db_tune.inverse_project(names_qry[21],res[21].cpu().detach().numpy())
-            print(str([tf.pose.position.x,tf.pose.position.z]) + " vs " + str(inv_spt))
+            #inv_spt = db_tune.inverse_project(names_qry[21],res[21].cpu().detach().numpy())
+            #print(str([tf.pose.position.x,tf.pose.position.z]) + " vs " + str(inv_spt))
             for i in range(len(names_qry)):
                 pred = res[i].cpu().detach().numpy()
-                inv_tf = db_tune.inverse_project(names_qry[i],res[i].cpu().detach().numpy())
+                inv_tf = db_tune.inverse_project(names_qry[i], res[i].cpu().detach().numpy())
                 #print(names_qry[i] + " - " + str(pred) + " - " + str(inv_tf))
                 obj_idx = int(np.floor(i/args.sample_size))
                 if len(out_txt) <= obj_idx:
