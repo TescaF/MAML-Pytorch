@@ -172,7 +172,7 @@ def main():
         if not os.path.exists(cam_path):
             os.makedirs(cam_path)
         ##tf_list = [tf_list[-1]]
-        tf_i = 0 
+        tf_i = 0
         out_txt,tf_pred,obj_names = [],[],[]
         for tf in tf_list:
             x_spt,x_qry,n_spt,y_spt,y_qry,names_qry = db_tune.project_tf(args.name, tf)
@@ -205,7 +205,7 @@ def main():
                 img = cv.imread('/home/tesca/data/part-affordance-dataset/center_tools/' + names_qry[i] + '_center.jpg')
                 if img is not None:
                     height, width, _ = img.shape
-                    heatmap1 = cv.applyColorMap(cv.resize(cam1.transpose(),(width, height)), cv.COLORMAP_JET)
+                    heatmap1 = cv.applyColorMap(cv.resize(cam1,(width, height)), cv.COLORMAP_JET)
                     result1 = heatmap1 * 0.3 + img * 0.5
                     cv.circle(result1,(int(pos[1]),int(pos[0])),5,[0,255,255])
                     cv.imwrite(cam_path + names_qry[i] + '-kf_' + str(tf_i) + '.jpg', result1)

@@ -196,7 +196,7 @@ def main():
                     train_loss,test_loss,w,_ = maml.finetuning(x_spt_one, y_spt_one,x_qry_one,y_qry_one)
                     test_losses.append(test_loss)
                 #if not CLUSTER:
-                if True:
+                if epoch % 10000 == 0: 
                     for i in range(x_spt_one.shape[0]):
                         name = n_spt[i]
                         cam1 = get_CAM(w[0][i])

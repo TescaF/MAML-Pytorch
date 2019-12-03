@@ -437,11 +437,6 @@ class Meta(nn.Module):
         s_weights = net.parameters()
 
         for k in range(self.update_step_test):
-            with torch.no_grad():
-                logits_q = net(x_spt, vars=s_weights, bn_training=True, hook=hook)
-                loss_q = self.loss_fn(logits_q, y_spt)
-                train_corrects[k] += loss_q.item()
-
             ## Get classification loss
             logits_a = net(x_spt, vars=s_weights, bn_training=True)
             logits_b = net(x_qry, vars=s_weights, bn_training=True)
@@ -453,9 +448,11 @@ class Meta(nn.Module):
             ## Get location loss
             logits_r = net(x_spt, vars=s_weights, bn_training=True, hook=hook)
             lossr = self.loss_fn(logits_r, y_spt)
+            train_corrects[k] += lossr.item()
 
             ## Update weights
             grad_a = list(torch.autograd.grad(lossa+lossb+lossc+(self.lmb*lossr), s_weights,allow_unused=True))
+            #grad_a = list(torch.autograd.grad(lossa+lossb+lossc+(self.lmb*lossr), s_weights,allow_unused=True))
             for g in range(len(grad_a)):
                 if grad_a[g] is None:
                     pdb.set_trace()
