@@ -238,7 +238,7 @@ class Affordances:
         # Get negative images
         # Get query images
 
-    def apply_tf_wrt_grasp(self, img_name, tf):
+    def get_grasp_normal(self, img_name):
         label = scipy.io.loadmat(self.aff_dir + img_name.split("_00")[0] + "/" + img_name + "_label.mat")
         img_affs = label['gt_label']
 
@@ -250,33 +250,32 @@ class Affordances:
         grasp_pts = np.matrix([(i,j) for i in range(img_affs.shape[0]) for j in range(img_affs.shape[1]) if img_affs[i,j] == 1])
         clusters = sklearn.cluster.DBSCAN(eps=3, min_samples=20).fit_predict(grasp_pts)
         grasp_clust = [grasp_pts[i] for i in range(len(grasp_pts)) if clusters[i] > -1]
-
         cy, cx = np.median(grasp_clust,axis=0).squeeze(0)
-        dists = [math.sqrt((ay - p[0,0])**2.0 + (ax - p[0,1])**2.0) for p in grasp_clust]
-        c_idx = np.argmax(np.array(dists))
-        ey, ex = np.array(grasp_clust[c_idx]).squeeze(0)
-        grasp_diff = np.array(self.output_scale.transform(np.array([cy,cx]).reshape(1,-1)) - self.output_scale.transform(np.array([ey,ex]).reshape(1,-1))).squeeze(0)
 
         # Get edge normal
-        #reg = LinearRegression().fit(np.stack(grasp_clust)[:,0], np.stack(grasp_clust)[:,1])
-        #normal = math.atan(reg.coef_) #+ math.pi/2.0
         pca = PCA(n_components=1)
-        pca.fit(np.stack(grasp_clust))
+        pca_tf = pca.fit_transform(np.stack(grasp_clust))
         normal = math.atan2(pca.components_[0,1],pca.components_[0,0])
-
-        ## Pick TF direction that minimizes distance from aff points mean
-        #mean_aff_old = np.multiply(np.mean(aff_pts,axis=0) * self.px_to_cm, self.cm_to_std) - 1.0
-        mean_aff = np.multiply(np.array([ay,ax]) * self.px_to_cm, self.cm_to_std) - 1.0
-        #mean_grasp_old = np.multiply(np.mean(grasp_pts,axis=0) * self.px_to_cm, self.cm_to_std) - 1.0
-        mean_grasp = np.multiply(np.array([cy,cx]) * self.px_to_cm, self.cm_to_std) - 1.0
-        comp_ang = math.atan2(mean_aff[1]-mean_grasp[1],mean_aff[0]-mean_grasp[0])
-        '''print("aff: " + str(mean_aff))
-        print("grasp: " + str(mean_grasp))
-        print("comp ang: " + str(comp_ang))
-        print("normal: " + str(normal))'''
-        #comp_ang = math.atan2(mean_aff[0,1]-mean_grasp[0,1],mean_aff[0,0]-mean_grasp[0,0])
+        grasp_reduced = pca.inverse_transform(pca_tf)
+        comp_ang = math.atan2(ax-cx,ay-cy)
         cand_ang = np.array([normal, normal-np.pi, normal+np.pi])
         align_normal = cand_ang[np.argmin(np.absolute(cand_ang - comp_ang))]
+
+        # Get grasp end along normal dim
+        e_dists = [math.sqrt((ay - p[0])**2.0 + (ax - p[1])**2.0) for p in grasp_reduced]
+        e_idx = np.argmax(np.array(e_dists))
+        ey, ex = np.array(grasp_reduced[e_idx])
+
+        # Get grasp center along normal dim
+        c_dists = [math.sqrt((cy - p[0])**2.0 + (cx - p[1])**2.0) for p in grasp_reduced]
+        c_idx = np.argmin(np.array(c_dists))
+        ncy, ncx = np.array(grasp_reduced[c_idx])
+
+        grasp_diff = np.array(self.output_scale.transform(np.array([ncy,ncx]).reshape(1,-1)) - self.output_scale.transform(np.array([ey,ex]).reshape(1,-1))).squeeze(0)
+        return align_normal, grasp_diff
+
+    def apply_tf_wrt_grasp(self, img_name, tf):
+        align_normal, grasp_diff = self.get_grasp_normal(img_name)
 
         # Project TF x and y
         tf_x = tf.pose.position.x 
@@ -285,76 +284,36 @@ class Affordances:
         tf_r = math.sqrt(tf_x**2.0 + tf_y**2.0)
         tf_ang = math.atan2(tf_y, tf_x)
         a = tf_ang + align_normal
+
+        # Convert cm to standard frame
         ee_std = [math.cos(a) * tf_r * 100.0 * self.cm_to_std[0], math.sin(a) * tf_r * 100.0 * self.cm_to_std[1]]
         if self.grasp == "end":
             ee_std -= grasp_diff
-        ee_inv = self.inverse_project(img_name, ee_std)
-        #print(str([tf.pose.position.x,tf.pose.position.z]) + " -> " + str(ee_inv))
-        ee = self.output_scale.inverse_transform(np.array(ee_std).reshape(1,-1)).squeeze(0)
-        ee1 = self.output_scale.inverse_transform(np.array(ee_std+grasp_diff).reshape(1,-1)).squeeze(0)
 
-        '''print(ee_std)
-        print("align: " + str(align_normal))
-        print("tf_ang: " + str(tf_ang))
-        img = cv.imread('/home/tesca/data/part-affordance-dataset/tools/ladle_02/' + img_name + '_rgb.jpg')
-        for pt in aff_clust:
+        # Testing
+        #img = cv.imread('/home/tesca/data/part-affordance-dataset/tools/ladle_02/' + img_name + '_rgb.jpg')
+        '''for pt in aff_clust:
             img[pt[0,0],pt[0,1]] = (0,0,0)
         for pt in grasp_clust:
-            img[pt[0,0],pt[0,1]] = (255,255,255)
+            img[pt[0,0],pt[0,1]] = (255,255,255)'''
+        '''ee_inv = self.inverse_project(img_name, ee_std)
+        print(str([tf.pose.position.x,tf.pose.position.z]) + " -> " + str(ee_inv))
+        ee = self.output_scale.inverse_transform(np.array(ee_std).reshape(1,-1)).squeeze(0)
+        ee1 = self.output_scale.inverse_transform(np.array(ee_std+grasp_diff).reshape(1,-1)).squeeze(0)
         cv.circle(img,(int(ee[1]),int(ee[0])),5,[255,255,0])
         cv.circle(img,(int(ee1[1]),int(ee1[0])),5,[255,0,0])
-        cv.circle(img,(int(cx),int(cy)),5,[0,0,255])
         cv.imshow("img",img)
         cv.waitKey(0)'''
         return ee_std
 
     def inverse_project(self, img_name, pt):
-        label = scipy.io.loadmat(self.aff_dir + img_name.split("_00")[0] + "/" + img_name + "_label.mat")
-        img_affs = label['gt_label']
+        align_normal, grasp_diff = self.get_grasp_normal(img_name)
 
-        aff_pts = np.matrix([(i,j) for i in range(img_affs.shape[0]) for j in range(img_affs.shape[1]) if img_affs[i,j] > 1])
-        clusters = sklearn.cluster.DBSCAN(eps=3, min_samples=10).fit_predict(aff_pts)
-        aff_clust = [aff_pts[i] for i in range(len(aff_pts)) if clusters[i] > -1]
-        ay, ax = np.median(aff_clust,axis=0).squeeze(0)
-
-        grasp_pts = np.matrix([(i,j) for i in range(img_affs.shape[0]) for j in range(img_affs.shape[1]) if img_affs[i,j] == 1])
-        clusters = sklearn.cluster.DBSCAN(eps=3, min_samples=20).fit_predict(grasp_pts)
-        grasp_clust = [grasp_pts[i] for i in range(len(grasp_pts)) if clusters[i] > -1]
-        cy, cx = np.median(grasp_clust,axis=0).squeeze(0)
-        dists = [math.sqrt((ay - p[0,0])**2.0 + (ax - p[0,1])**2.0) for p in grasp_clust]
-        c_idx = np.argmax(np.array(dists))
-        ey, ex = np.array(grasp_clust[c_idx]).squeeze(0)
-        #dists2 = [math.sqrt((ay - p[0,1])**2.0 + (ax - p[0,0])**2.0) for p in grasp_clust]
-        #c_idx2 = np.argmax(np.array(dists2))
-        #ey2, ex2 = np.array(grasp_clust[c_idx2]).squeeze(0)
-        #img = cv.imread('/home/tesca/data/part-affordance-dataset/tools/ladle_02/' + img_name + '_rgb.jpg')
-        #cv.circle(img,(int(ex),int(ey)),5,[255,0,0])
-        #print([ex,ey])
-        #cv.circle(img,(int(ex2),int(ey2)),5,[0,255,0])
-        #cv.circle(img,(int(ax),int(ay)),5,[0,0,255])
-        #cv.imshow("img",img)
-        #cv.waitKey(0)
-        grasp_diff = np.array(self.output_scale.transform(np.array([cy,cx]).reshape(1,-1)) - self.output_scale.transform(np.array([ey,ex]).reshape(1,-1))).squeeze(0)
         if self.grasp == "end":
             pt += grasp_diff
 
-        # Get edge normal
-        #reg = LinearRegression().fit(grasp_pts[:,0], grasp_pts[:,1])
-        #normal = math.atan(reg.coef_) #+ math.pi/2.0
-        pca = PCA(n_components=1)
-        pca.fit(np.stack(grasp_clust))
-        normal = math.atan2(pca.components_[0,1],pca.components_[0,0])
-        #mean_grasp = np.multiply(np.mean(grasp_pts,axis=0) * self.px_to_cm, self.cm_to_std) - 1.0
-        #mean_aff = np.multiply(np.mean(aff_pts,axis=0) * self.px_to_cm, self.cm_to_std) - 1.0
-        mean_aff = np.multiply(np.array([ay,ax]) * self.px_to_cm, self.cm_to_std) - 1.0
-        mean_grasp = np.multiply(np.array([cy,cx]) * self.px_to_cm, self.cm_to_std) - 1.0
-        comp_ang = math.atan2(mean_aff[1]-mean_grasp[1],mean_aff[0]-mean_grasp[0])
-        #comp_ang = math.atan2(mean_aff[0,1]-mean_grasp[0,1],mean_aff[0,0]-mean_grasp[0,0])
-        cand_ang = np.array([normal, normal-np.pi, normal+np.pi])
-        align_normal = cand_ang[np.argmin(np.absolute(cand_ang - comp_ang))]
-
         inv_pt = np.divide(pt, self.cm_to_std)/100.0
-        pt_r = np.linalg.norm(inv_pt)
+        pt_r = math.sqrt(inv_pt[0]**2.0 + inv_pt[1]**2.0)
         pt_ang = math.atan2(inv_pt[1], inv_pt[0])
         a = align_normal - pt_ang
         ee = [math.cos(a) * pt_r, math.sin(a) * pt_r]
