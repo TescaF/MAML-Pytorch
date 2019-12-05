@@ -154,8 +154,10 @@ class Learner(nn.Module):
         return info
 
 
+    def grad_hook(self, grad):
+        self.grads.append(grad)
 
-    def forward(self, x, vars=None, bn_training=True,dropout_rate=-1, hook=None, last_layer=False,debug=False):
+    def forward(self, x, vars=None, bn_training=True,dropout_rate=-1, hook=None, grad_hook=None, last_layer=False,debug=False):
         """
         This function can be called by finetunning, however, in finetunning, we dont wish to update
         running_mean/running_var. Thought weights/bias of bn is updated, it has been separated by fast_weights.
@@ -178,11 +180,15 @@ class Learner(nn.Module):
             bn_idx = 0
         p = 0
 
+        self.grads = []
         for name, param in self.config[c:]:
             if debug:
                 pdb.set_trace()
             if hook == p:
                 hook_data = x
+            if grad_hook == p:
+                h = x.register_hook(self.grad_hook)
+
             p += 1
             if dropout_rate > 0:
                 x = F.dropout(x, p=dropout_rate, training=True)

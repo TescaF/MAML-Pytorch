@@ -39,7 +39,7 @@ def img_polar_tf(img):
 
 def main():
 
-    CLUSTER = True
+    CLUSTER = False
 
     home = expanduser("~")
     if CLUSTER:
@@ -73,7 +73,8 @@ def main():
                        samples=sample_size,
                        k_shot=args.k_spt,
                        k_qry=args.k_qry,
-                       dim_out=dim_output)
+                       dim_out=dim_output,
+                       grasp=None)
 
     db_test = Affordances(
                        CLUSTER=CLUSTER,
@@ -85,7 +86,8 @@ def main():
                        samples=sample_size,
                        k_shot=args.k_spt,
                        k_qry=-1,
-                       dim_out=dim_output)
+                       dim_out=dim_output,
+                       grasp=None)
 
     db_test.output_scale = db_train.output_scale
     if CLUSTER:
@@ -190,7 +192,7 @@ def main():
                 n_spt = names_one[:k_spt]
                 n_qry = names_one[k_spt:]
                 if args.meta == 1:
-                    _,w,loss,_ = maml.class_tune3(n_spt_one, x_spt_one,y_spt_one,x_qry_one,y_qry_one)
+                    _,w,loss,_ = maml.class_tune4(n_spt_one, x_spt_one,y_spt_one,x_qry_one,y_qry_one)
                     test_losses.append(loss)
                 else:
                     train_loss,test_loss,w,_ = maml.finetuning(x_spt_one, y_spt_one,x_qry_one,y_qry_one)

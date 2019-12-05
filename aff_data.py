@@ -24,16 +24,17 @@ from numpy.random import RandomState
 import os.path
 
 class Affordances:
-    def __init__(self, CLUSTER, inputs, mode, train, exclude, samples, batchsz, k_shot, k_qry, dim_out):
+    def __init__(self, CLUSTER, inputs, mode, train, exclude, samples, batchsz, k_shot, k_qry, dim_out, grasp):
         """
         :param batchsz: task num
         :param k_shot: number of samples for fine-tuning
         :param k_qry:
         :param imgsz:
         """
-        self.grasp = "end"
+        self.grasp = grasp
         self.inputs = inputs
-        self.px_to_cm = 1.0/7.6
+        self.px_to_cm = 0.5/7.6
+        #self.px_to_cm = 1.0/7.6
         self.cm_to_std = [1.33/42.0,1.0/42.0] # Standardize 480x640 image dims
         self.train = train
         self.rand = RandomState(222)
@@ -260,6 +261,7 @@ class Affordances:
         comp_ang = math.atan2(ax-cx,ay-cy)
         cand_ang = np.array([normal, normal-np.pi, normal+np.pi])
         align_normal = cand_ang[np.argmin(np.absolute(cand_ang - comp_ang))]
+        #align_normal = comp_ang
 
         # Get grasp end along normal dim
         e_dists = [math.sqrt((ay - p[0])**2.0 + (ax - p[1])**2.0) for p in grasp_reduced]
@@ -272,51 +274,81 @@ class Affordances:
         ncy, ncx = np.array(grasp_reduced[c_idx])
 
         grasp_diff = np.array(self.output_scale.transform(np.array([ncy,ncx]).reshape(1,-1)) - self.output_scale.transform(np.array([ey,ex]).reshape(1,-1))).squeeze(0)
-        return align_normal, grasp_diff
+        return align_normal, grasp_diff, (cy,cx)
 
     def apply_tf_wrt_grasp(self, img_name, tf):
-        align_normal, grasp_diff = self.get_grasp_normal(img_name)
+        align_normal, grasp_diff, center = self.get_grasp_normal(img_name)
 
         # Project TF x and y
-        tf_x = tf.pose.position.x 
+        '''tf_x = tf.pose.position.x 
         tf_y = -tf.pose.position.z
-        tf_z = tf.pose.position.y
+        tf_z = tf.pose.position.y'''
+        pose = np.matrix([[tf.pose.position.x,tf.pose.position.y,tf.pose.position.z]])
+        tf_x, tf_y = np.array(np.dot(pose,self.grasp[1])).squeeze(0).tolist()
         tf_r = math.sqrt(tf_x**2.0 + tf_y**2.0)
         tf_ang = math.atan2(tf_y, tf_x)
         a = tf_ang + align_normal
+        #print("norm: " + str(align_normal))
+        #print("tf_a: " + str(tf_ang))
+        #print("a: " + str(a))
 
         # Convert cm to standard frame
-        ee_std = [math.cos(a) * tf_r * 100.0 * self.cm_to_std[0], math.sin(a) * tf_r * 100.0 * self.cm_to_std[1]]
-        if self.grasp == "end":
+        ee_cm = np.array([math.cos(a) * tf_r * 100.0 / self.px_to_cm, math.sin(a) * tf_r * 100.0 / self.px_to_cm]) + np.array(self.center[:2])
+        ee_std = self.output_scale.transform(np.array(ee_cm).reshape(1,-1)).squeeze(0)
+        #ee_std = [math.cos(a) * tf_r * 100.0 * self.cm_to_std[0], math.sin(a) * tf_r * 100.0 * self.cm_to_std[1]]
+        #print("new: " + str(ee_std))
+        #print("old: " + str(o_ee_std))
+        if self.grasp[0] == "end":
             ee_std -= grasp_diff
+        centering = self.output_scale.transform(np.array(center).reshape(1,-1)).squeeze()
+        #ee_std -= centering
 
         # Testing
-        #img = cv.imread('/home/tesca/data/part-affordance-dataset/tools/ladle_02/' + img_name + '_rgb.jpg')
         '''for pt in aff_clust:
             img[pt[0,0],pt[0,1]] = (0,0,0)
         for pt in grasp_clust:
             img[pt[0,0],pt[0,1]] = (255,255,255)'''
-        '''ee_inv = self.inverse_project(img_name, ee_std)
-        print(str([tf.pose.position.x,tf.pose.position.z]) + " -> " + str(ee_inv))
-        ee = self.output_scale.inverse_transform(np.array(ee_std).reshape(1,-1)).squeeze(0)
+        #ee_inv = self.inverse_project(img_name, ee_std)
+        #print(str([tf.pose.position.x,tf.pose.position.z]) + " -> " + str(ee_inv))
+        '''img = cv.imread('/home/tesca/data/part-affordance-dataset/center_tools/' + img_name + '_center.jpg')
+        img2 = cv.imread('/home/tesca/data/part-affordance-dataset/tools/' + img_name.split("_00")[0] + '/' + img_name + '_rgb.jpg')
+        ee = self.output_scale.inverse_transform(np.array(ee_std-centering).reshape(1,-1)).squeeze(0)
         ee1 = self.output_scale.inverse_transform(np.array(ee_std+grasp_diff).reshape(1,-1)).squeeze(0)
         cv.circle(img,(int(ee[1]),int(ee[0])),5,[255,255,0])
-        cv.circle(img,(int(ee1[1]),int(ee1[0])),5,[255,0,0])
+        #cv.circle(img,(int(ee1[1]),int(ee1[0])),5,[255,0,0])
         cv.imshow("img",img)
+        cv.waitKey(0)'''
+        '''ee = self.output_scale.inverse_transform(np.array(ee_std+centering).reshape(1,-1)).squeeze(0)
+        ee1 = self.output_scale.inverse_transform(np.array(ee_std+grasp_diff+centering).reshape(1,-1)).squeeze(0)
+        cv.circle(img2,(int(ee[1]),int(ee[0])),5,[255,255,0])
+        cv.circle(img2,(int(ee1[1]),int(ee1[0])),5,[255,0,0])
+        cv.imshow("img",img2)
         cv.waitKey(0)'''
         return ee_std
 
     def inverse_project(self, img_name, pt):
-        align_normal, grasp_diff = self.get_grasp_normal(img_name)
+        align_normal, grasp_diff, center = self.get_grasp_normal(img_name)
 
-        if self.grasp == "end":
+        if self.grasp[0] == "end":
             pt += grasp_diff
+        #centering = self.output_scale.transform(np.array(center).reshape(1,-1)).squeeze()
+        #pt += centering
 
-        inv_pt = np.divide(pt, self.cm_to_std)/100.0
+        #inv_pt = np.divide(pt, self.cm_to_std)/100.0
+        ee_px = self.output_scale.inverse_transform(np.array(pt).reshape(1,-1)).squeeze(0)
+        inv_pt = (np.array(ee_px)-np.array(self.center[:2])) * self.px_to_cm / 100.0
         pt_r = math.sqrt(inv_pt[0]**2.0 + inv_pt[1]**2.0)
         pt_ang = math.atan2(inv_pt[1], inv_pt[0])
         a = align_normal - pt_ang
         ee = [math.cos(a) * pt_r, math.sin(a) * pt_r]
+
+        # Testing
+        #img2 = cv.imread('/home/tesca/data/part-affordance-dataset/tools/' + img_name.split("_00")[0] + '/' + img_name + '_rgb.jpg')
+        '''img = cv.imread('/home/tesca/data/part-affordance-dataset/center_tools/' + img_name + '_center.jpg')
+        ee = self.output_scale.inverse_transform(np.array(pt).reshape(1,-1)).squeeze(0)
+        cv.circle(img,(int(ee[1]),int(ee[0])),5,[255,255,0])
+        cv.imshow("img",img)
+        cv.waitKey(0)'''
 
         return ee
 

@@ -16,7 +16,8 @@ from copy import deepcopy
 
 def get_CAM(cam):
     cam = cam.reshape(14,14)
-    cam = torch.abs(cam)
+    #cam = torch.abs(cam)
+    cam = torch.max(cam.cpu(),torch.tensor(0).float())
     cam = cam - torch.min(cam)
     cam_img = cam / torch.max(cam)
     cam_img = np.uint8(255 * cam_img.cpu().detach().numpy())
@@ -62,21 +63,7 @@ def quaternion_from_matrix(matrix):
     q *= 0.5 / math.sqrt(t * M[3, 3])
     return q
 
-def inverse_tf(p):
-    if args.name.startswith("ladle"):
-        if args.t == 1:
-            goal_tf = [0.039,0.442,0.04]
-        elif args.t == 2:
-            goal_tf = [-0.132,0.74,0.38]
-    if args.name.startswith("saw"):
-        if args.t == 1:
-            goal_tf = [-0.182,0.645,-0.009]
-        elif args.t == 2:
-            goal_tf = [0.005,-0.451,0.38]
-    if args.name.startswith("turner"):
-        if args.t == 1:
-            goal_tf = [-0.184,0.63,-0.025]
-
+def inverse_tf(p, goal_tf):
     trans = p.pose.position
     trans_m = np.identity(4)
     # Put into goal space
@@ -111,6 +98,28 @@ def main():
     np.set_printoptions(precision=5,suppress=True)
     print(args)
 
+    if args.name.startswith("ladle"):
+        if args.t == 1:
+            goal_tf = [0.039,0.442,0.04]
+            grasp = ["end", np.matrix([[1,0],[0,0],[0,-1]])]
+        elif args.t == 2:
+            goal_tf = [-0.132,0.74,0.38]
+            grasp = ["center", np.matrix([[0,0],[1,0],[0,-1]])]
+        else:
+            goal_tf = [0.039,0.442,0.04]
+            grasp = ["end", np.matrix([[1,0],[0,0],[0,-1]])]
+    if args.name.startswith("saw"):
+        if args.t == 1:
+            goal_tf = [-0.182,0.645,-0.009]
+            grasp = ["end", np.matrix([[1,0],[0,-1],[0,0]])]
+        elif args.t == 2:
+            goal_tf = [0.005,-0.451,0.38]
+            grasp = ["end", np.matrix([[1,0],[0,-1],[0,0]])]
+    if args.name.startswith("turner"):
+        if args.t == 1:
+            goal_tf = [-0.184,0.63,-0.025]
+            grasp = ["end", np.matrix([[1,0],[0,0],[0,-1]])]
+
     fts_loc = "/home/tesca/data/part-affordance-dataset/features/center_resnet_pool_fts-14D.pkl"
     with open(fts_loc, 'rb') as handle:
         inputs = pickle.load(handle)       #dict(img) = [[4096x1], ... ]
@@ -130,7 +139,8 @@ def main():
                        samples=sample_size,
                        k_shot=args.k_spt,
                        k_qry=args.k_qry,
-                       dim_out=dim_output)
+                       dim_out=dim_output,
+                       grasp=grasp)
 
     print(str(db_tune.dim_input) + "-D input")
     device = torch.device('cuda')
@@ -166,19 +176,20 @@ def main():
         tf_bag = rosbag.Bag(tf_path)
         tf_list = []
         for topic, msg, t in tf_bag.read_messages(topics=['eef_pose_j2s7s300_link_base']):
-            tf_list.append(inverse_tf(msg))
+            tf_list.append(inverse_tf(msg,goal_tf))
+        #print(tf_list)
             #tf_list.append(msg)
         cam_path = os.path.expanduser("~") + '/data/cam/ex' + str(exclude_idx) + '/demo' + str(demo_num) + '/'
         if not os.path.exists(cam_path):
             os.makedirs(cam_path)
-        ##tf_list = [tf_list[-1]]
+        tf_list = [tf_list[-1]]
         tf_i = 0
         out_txt,tf_pred,obj_names = [],[],[]
         for tf in tf_list:
             x_spt,x_qry,n_spt,y_spt,y_qry,names_qry = db_tune.project_tf(args.name, tf)
             x_spt, y_spt, x_qry, y_qry, n_spt = torch.from_numpy(x_spt).float().to(device), torch.from_numpy(y_spt).float().to(device), \
                                                  torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device), torch.from_numpy(n_spt).float().to(device)
-            loss,w,_,res = maml.class_tune3(n_spt, x_spt,y_spt,x_qry,y_qry)
+            loss,w,_,res = maml.class_tune3(n_spt, x_spt,y_spt,x_qry,y_qry,sim=False)
             print("KF " + str(tf_i) + " training loss: " + str(np.array(loss)))
             #inv_spt = db_tune.inverse_project(names_qry[21],res[21].cpu().detach().numpy())
             #print(str([tf.pose.position.x,tf.pose.position.z]) + " vs " + str(inv_spt))
@@ -205,7 +216,7 @@ def main():
                 img = cv.imread('/home/tesca/data/part-affordance-dataset/center_tools/' + names_qry[i] + '_center.jpg')
                 if img is not None:
                     height, width, _ = img.shape
-                    heatmap1 = cv.applyColorMap(cv.resize(cam1,(width, height)), cv.COLORMAP_JET)
+                    heatmap1 = cv.applyColorMap(cv.resize(cam1.transpose(),(width, height)), cv.COLORMAP_JET)
                     result1 = heatmap1 * 0.3 + img * 0.5
                     cv.circle(result1,(int(pos[1]),int(pos[0])),5,[0,255,255])
                     cv.imwrite(cam_path + names_qry[i] + '-kf_' + str(tf_i) + '.jpg', result1)

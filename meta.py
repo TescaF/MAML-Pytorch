@@ -427,14 +427,17 @@ class Meta(nn.Module):
         return loss, [cam_vals2],  np.array(train_corrects)/task_num, pred
         #return loss, [torch.cat([cam_vals1,cam_vals2])],  np.array(train_corrects)/task_num, pred
 
-    def class_tune3(self, n_spt, x_spt, y_spt, x_qry, y_qry,debug=False):
+    def class_tune3(self, n_spt, x_spt, y_spt, x_qry, y_qry,debug=False,sim=True):
         task_num = x_spt.size(0)
         test_corrects = [0 for _ in range(self.update_step_test + 1)]
+        train_corrects = [0 for _ in range(self.update_step_test)]
         loss_fn = nn.BCEWithLogitsLoss()
         hook = len(list(self.net.parameters()))-1
 
         net = deepcopy(self.net)
         s_weights = net.parameters()
+        step_optim = optim.SGD(s_weights, self.update_lr)
+        grads = torch.zeros([x_qry.shape[0],196]).cuda()
 
         with torch.no_grad():
             logits_q = net(x_qry, vars=s_weights, bn_training=True, hook=hook)
@@ -443,33 +446,42 @@ class Meta(nn.Module):
 
         for k in range(self.update_step_test):
             ## Get classification loss
-            logits_a = net(x_spt, vars=s_weights, bn_training=True)
-            logits_b = net(x_qry, vars=s_weights, bn_training=True)
+            #class_in = torch.cat([x_spt, x_qry])
+            logits_a = net(x_qry, vars=s_weights, bn_training=True, grad_hook=hook-5)
+            #logits_b = net(x_qry, vars=s_weights, bn_training=True)
             logits_c = net(n_spt, vars=s_weights, bn_training=True)
-            lossa = loss_fn(logits_a, torch.ones(x_spt.shape[0]).float().cuda().unsqueeze(1))/x_spt.shape[0]
-            lossb = loss_fn(logits_b, torch.ones(x_qry.shape[0]).float().cuda().unsqueeze(1))/x_qry.shape[0]
+            lossa = loss_fn(logits_a, torch.ones(x_qry.shape[0]).float().cuda().unsqueeze(1))/x_qry.shape[0]
+            #lossb = loss_fn(logits_b, torch.ones(x_qry.shape[0]).float().cuda().unsqueeze(1))/x_qry.shape[0]
             lossc = loss_fn(logits_c, torch.zeros(n_spt.shape[0]).float().cuda().unsqueeze(1))/n_spt.shape[0]
 
             ## Get location loss
             logits_r = net(x_spt, vars=s_weights, bn_training=True, hook=hook)
             lossr = self.loss_fn(logits_r, y_spt)
-            #train_corrects[k] += lossr.item()
+            train_corrects[k] += lossr.item()
 
             ## Update weights
-            grad_a = list(torch.autograd.grad(lossa+lossb+lossc+(self.lmb*lossr), s_weights,allow_unused=True))
+            step_optim.zero_grad()
+            step_loss = lossa + lossc #+ (self.lmb * lossr)
+            step_loss.backward()
+            pdb.set_trace()
+            grads += net.grads
+            step_optim.step()
+            '''grad_a = list(torch.autograd.grad(lossa+lossb+lossc+(self.lmb*lossr), s_weights,,allow_unused=True))
+            pdb.set_trace()
             #grad_a = list(torch.autograd.grad(lossa+lossb+lossc+(self.lmb*lossr), s_weights,allow_unused=True))
             for g in range(len(grad_a)):
                 if grad_a[g] is None:
                     pdb.set_trace()
                     grad_a[g] = torch.zeros_like(s_weights[g])
-            s_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad_a, s_weights)))  
+            s_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad_a, s_weights)))  '''
+
 
             with torch.no_grad():
                 logits_q = net(x_qry, vars=s_weights, bn_training=True, hook=hook)
                 loss_q = self.loss_fn(logits_q, y_qry)
                 test_corrects[k+1] += loss_q.item()
-
-            del lossa, lossb, lossc, lossr, grad_a, logits_a, logits_b, logits_c, logits_r
+            del lossa, lossc, lossr, logits_a, logits_c, logits_r
+            #del lossa, lossb, lossc, lossr, grad_a, logits_a, logits_b, logits_c, logits_r
 
         spt_logits = net(x_spt, vars=s_weights, bn_training=True, hook=hook)
         spt_pred = self.avg_pred(spt_logits)
@@ -477,9 +489,13 @@ class Meta(nn.Module):
         qry_logits = net(x_qry, vars=s_weights, bn_training=True, hook=hook)
         cam_vals1 = net(x_spt,vars=s_weights,bn_training=True,hook=hook-2,debug=debug)
         cam_vals2 = net(x_qry,vars=s_weights,bn_training=True,hook=hook-2,debug=debug)
+        cam_vals3 = torch.mul(cam_vals2,F.relu(grads))
         pred = self.avg_pred(qry_logits)
         del qry_logits, spt_logits, s_weights
-        return loss, [cam_vals2],  np.array(test_corrects), pred
+        if sim:
+            return loss, [cam_vals2],  np.array(test_corrects), pred
+        else:
+            return loss, [cam_vals3],  np.array(train_corrects), pred
 
 def main():
     pass
