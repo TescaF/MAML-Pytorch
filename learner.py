@@ -257,6 +257,9 @@ class Learner(nn.Module):
             else:
                 raise NotImplementedError
 
+            if hook is not None:
+                return hook_data
+
         # make sure variable is used properly
         if not idx == len(vars):
             pdb.set_trace()

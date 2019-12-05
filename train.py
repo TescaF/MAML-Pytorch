@@ -98,7 +98,18 @@ def main():
         save_path = os.getcwd() + '/data/models/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_exclude' + str(args.exclude) + '_epoch'
     print(str(db_train.dim_input) + "-D input")
     dim = db_train.dim_input
-    if args.polar == 1 and args.meta == 1:
+    if True:
+        config = [
+            ('linear', [dim,dim,True]),
+            ('relu', [True]),
+            ('linear', [1,dim,True]),
+            ('relu', [True]),
+            ('reshape',[196]),
+            ('linear', [196,196,True]),
+        ]
+        maml = Meta(args, config, dim_output, None, None).to(device)
+        maml.loss_fn = maml.avg_loss
+    elif args.polar == 1 and args.meta == 1:
         config = [
             ('linear', [dim,dim,True]),
             ('leakyrelu', [0.01, True]),
@@ -113,7 +124,7 @@ def main():
         ]
         maml = Meta(args, config, dim_output, None, None).to(device)
         maml.loss_fn = maml.polar_loss
-    if args.polar == 0 and args.meta == 1:
+    elif args.polar == 0 and args.meta == 1:
         config = [
             ('linear', [dim,dim,True]),
             ('leakyrelu', [0.01, True]),
@@ -126,7 +137,7 @@ def main():
         ]
         maml = Meta(args, config, dim_output, None, None).to(device)
         maml.loss_fn = maml.avg_loss
-    if args.meta == 0:
+    elif args.meta == 0:
         config = [
             ('linear', [dim,dim,True]),
             ('leakyrelu', [0.01, True]),
@@ -157,7 +168,8 @@ def main():
                                      torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device), torch.from_numpy(n_spt).float().to(device)
 
         if args.meta == 1:
-            acc, loss, train_acc, grad = maml.class_forward(n_spt, x_spt, y_spt, x_qry, y_qry,debug=epoch>25)
+            acc, loss, train_acc, grad = maml.class_test(n_spt, x_spt, y_spt, x_qry, y_qry,debug=epoch>25)
+            #acc, loss, train_acc, grad = maml.class_forward(n_spt, x_spt, y_spt, x_qry, y_qry,debug=epoch>25)
             losses.append(acc)
             training.append(train_acc)
             max_grad = max(max_grad, grad)
@@ -175,9 +187,7 @@ def main():
             max_grad = 0
 
         if epoch % 1000 == 0:  # evaluation
-            torch.save(maml.state_dict(), save_path + str(epoch%2000) + "_meta" + str(args.meta) + "_polar" + str(args.polar) + ".pt")
-
-        if epoch % 1000 == 0:  # evaluation
+            torch.save(maml.state_dict(), save_path + str(epoch%2000) + "_meta" + str(args.meta) + "_polar" + str(args.polar) + "-rv.pt")
             test_losses = []
             batch_x,n_spt,batch_y,names,dist = db_test.next()
             x_spt = batch_x[:,:k_spt,:]
@@ -224,7 +234,7 @@ def main():
                             result1 = heatmap1 * 0.3 + img * 0.5
                             cv.circle(result1,(int(pos[1]),int(pos[0])),5,[255,255,0])
                             if CLUSTER:
-                                cv.imwrite('/u/tesca/data/cam/ex' + str(args.exclude) + '/' + name + '_t' + str(t) + '.jpg', result1)
+                                cv.imwrite('/u/tesca/data/cam/ex' + str(args.exclude) + '/' + name + '_t' + str(t) + '-rv.jpg', result1)
                             else:
                                 cv.imwrite('data/cam/polar' + str(args.polar) + 'meta' + str(args.meta) +'/ex' + str(args.exclude) + '/' + name + '_t' + str(t) + '.jpg', result1)
                             if polar and (cam2 is not None):
@@ -236,6 +246,7 @@ def main():
                 t+=1
 
             print('Test Loss:', np.array(test_losses).mean(axis=0))
+            pdb.set_trace()
             
 
 
