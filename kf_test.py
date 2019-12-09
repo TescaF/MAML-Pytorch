@@ -146,20 +146,30 @@ def main():
     device = torch.device('cuda')
     dim = db_tune.dim_input
     config = [
-        ('linear', [dim,dim,True]),
-        ('leakyrelu', [0.01, True]),
-        ('linear', [1,dim,True]),
-        ('leakyrelu', [0.01, True]),
-        ('reshape',[196]),
+        ('linear', [128,1024,True]),
+        ('relu', [True]),
+        ('linear', [1,128,True]),
+        ('relu', [True]),
+        ('reshape', [196]),
+        ('bn', [196]),
         ('linear', [196,196,True]),
-        ('leakyrelu', [0.01, True]),
+        ('relu', [True]),
+        ('bn', [196]),
         ('linear', [1,196,True])
     ]
+    '''('linear', [dim,dim,True]),
+    ('leakyrelu', [0.01, True]),
+    ('linear', [1,dim,True]),
+    ('leakyrelu', [0.01, True]),
+    ('reshape',[196]),
+    ('linear', [196,196,True]),
+    ('leakyrelu', [0.01, True]),
+    ('linear', [1,196,True])'''
     maml = Meta(args, config, dim_output, None, None).to(device)
     maml.loss_fn = maml.avg_loss
 
     ## Load model
-    load_path = os.path.expanduser("~") + '/data/models/model_tasksz' + str(args.task_num) + '_batchsz' + str(args.k_spt) + '_lr' + str(args.update_lr) + '_mr' + str(args.meta_lr) + '_lambda' + str(args.lmb) + '_exclude' + str(exclude_idx) + '_epoch0_meta1_polar0.pt'
+    load_path = os.path.expanduser("~") + '/data/models/model_tasksz' + str(args.task_num) + '_batchsz' + str(args.k_spt) + '_lr' + str(args.update_lr) + '_mr' + str(args.meta_lr) + '_lambda' + str(args.lmb) + '_exclude' + str(exclude_idx) + '_epoch0_meta1_polar0-rv.pt'
     maml.load_state_dict(torch.load(load_path))
     maml.eval()
     tmp = filter(lambda x: x.requires_grad, maml.parameters())
@@ -189,7 +199,8 @@ def main():
             x_spt,x_qry,n_spt,y_spt,y_qry,names_qry = db_tune.project_tf(args.name, tf)
             x_spt, y_spt, x_qry, y_qry, n_spt = torch.from_numpy(x_spt).float().to(device), torch.from_numpy(y_spt).float().to(device), \
                                                  torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device), torch.from_numpy(n_spt).float().to(device)
-            loss,w,_,res = maml.class_tune3(n_spt, x_spt,y_spt,x_qry,y_qry,sim=False)
+            loss,w,_,res = maml.class_tune4(n_spt, x_spt,y_spt,x_qry,y_qry)
+
             print("KF " + str(tf_i) + " training loss: " + str(np.array(loss)))
             #inv_spt = db_tune.inverse_project(names_qry[21],res[21].cpu().detach().numpy())
             #print(str([tf.pose.position.x,tf.pose.position.z]) + " vs " + str(inv_spt))

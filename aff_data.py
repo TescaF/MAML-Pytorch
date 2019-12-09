@@ -48,7 +48,7 @@ class Affordances:
             with open(fts_loc, 'rb') as handle:
                 self.inputs = pickle.load(handle)       #dict(img) = [[4096x1], ... ]
         categories = list(sorted(set([k.split("_")[0] for k in self.inputs.keys()])))
-        self.all_categories = categories
+        self.all_categories = [c for c in categories if c is not categories[exclude]]
         self.all_keys = list(sorted(self.inputs.keys()))
         print("Categories: " + str(categories))
         self.exclude = exclude
@@ -117,70 +117,63 @@ class Affordances:
             tf_data[idx] = norm.pdf(data[idx], dists[idx[-1]][0], dists[idx[-1]][1])
         return tf_data
 
-    def next(self):
-        init_inputs = np.zeros([self.batch_size, self.num_samples_per_class * self.sample_size, 14,14,1024])
-        neg_inputs = np.zeros([self.batch_size, self.num_samples_per_class * self.sample_size, 14,14,1024])
-        outputs = np.zeros([self.batch_size, self.num_samples_per_class * self.sample_size, self.dim_output])
-        selected_keys,pdf_data = [],[]
+    def select_keys(self):
+        pos_keys,pos_affs,neg_keys = [],[],[]
         c = self.rand.choice(len(self.categories), self.batch_size, replace=True)
         # Each "batch" is an object class
         for t in range(self.batch_size):
             # Get set of negative examples for img classification
-            neg_cats = self.rand.choice(len(self.categories), self.num_samples_per_class, replace=True)
-            while not (c[t] in neg_cats):
-                neg_cats = self.rand.choice(len(self.categories), self.num_samples_per_class, replace=True)
-
-            output_list,input_list,negative_list,sel_keys,cart_out = [],[],[],[],[]
+            p_keys,p_affs,n_keys = [],[],[]
             cat = self.categories[c[t]]
+            neg_cands = [n for n in self.all_categories if not n == cat]
+            neg_cats = self.rand.choice(len(neg_cands), self.num_samples_per_class, replace=True)
             valid_affs = [a for a in range(len(self.affs)) if any([o.startswith(cat) for o in self.affs[a][0]])]
-            aff_num = self.rand.choice(len(valid_affs))
-            valid_keys, aff_data = self.affs[valid_affs[aff_num]]
+            valid_keys, aff_data = self.affs[valid_affs[self.rand.choice(len(valid_affs))]]
             obj_keys = list(sorted(set([k.split("_00")[0] for k in valid_keys if k.startswith(cat)])))
+            k = self.rand.choice(len(obj_keys), self.num_samples_per_class, replace=False)
+            for n in range(self.num_samples_per_class):
+                negative_keys = list([key for key in self.all_keys if key.startswith(neg_cands[neg_cats[n]])])
+                sample_keys = list([key for key in valid_keys if key.startswith(obj_keys[k[n]])])
+                sk = self.rand.choice(len(sample_keys), self.sample_size, replace=False)
+                for s in range(self.sample_size):
+                    n_keys.append(negative_keys[sk[s]])
+                    p_keys.append(sample_keys[sk[s]])
+                    p_affs.append(aff_data[p_keys[-1]][-1])
+            neg_keys.append(n_keys)
+            pos_keys.append(p_keys)
+            pos_affs.append(p_affs)
+        return pos_keys, pos_affs, neg_keys
+
+    def next(self):
+        pos_keys, pos_affs, neg_keys = self.select_keys()
+        #pdb.set_trace()
+        init_inputs = np.zeros([self.batch_size, self.num_samples_per_class * self.sample_size, 14,14,1024])
+        neg_inputs = np.zeros([self.batch_size, self.num_samples_per_class * self.sample_size, 14,14,1024])
+        outputs = np.zeros([self.batch_size, self.num_samples_per_class * self.sample_size, self.dim_output])
+        # Each "batch" is an object class
+        for t in range(self.batch_size):
+            output_list,input_list,negative_list,cart_out = [],[],[],[]
             tf_a = self.rand.uniform(-np.pi,np.pi)
             max_r = math.sqrt(480.0**2.0 + 640.0**2.0)/2.0
             tf_r = self.rand.uniform(-0.5,0.5)
             tf_z = self.rand.uniform(-0.5,0.5)
-            ## Investigate whether z is used for training
-            ## Investigate best range for a and r
-            ## Re-evaluate r after x and a are selected
-            ## Change in a should be wrt existing a?
-            k = self.rand.choice(len(obj_keys), self.num_samples_per_class, replace=False)
-            for n in range(self.num_samples_per_class):
-                negative_keys = list([key for key in self.valid_keys if key.startswith(self.categories[neg_cats[n]])])
-                nk = self.rand.choice(len(negative_keys), self.sample_size, replace=False)
-                sample_keys = list([key for key in valid_keys if key.startswith(obj_keys[k[n]])])
-                if len(sample_keys) < self.sample_size:
-                        pdb.set_trace()
-                sk = self.rand.choice(len(sample_keys), self.sample_size, replace=False)
-                for s in range(self.sample_size):
-                    neg_fts = self.inputs[negative_keys[nk[s]]]
-                    negative_list.append(neg_fts.reshape((1024,14,14)).transpose())
-                    sel_keys.append(sample_keys[sk[s]])
-                    fts = self.inputs[sample_keys[sk[s]]]
-                    input_list.append(fts.reshape((1024,14,14)).transpose())
-                    pt1 = np.array(aff_data[sample_keys[sk[s]]][-1])
-                    pt = pt1 - self.center
-                    r1 = np.sqrt(pt[0]**2 + pt[1]**2)
-                    #r = r1 * (1+tf_r)
-                    a = math.atan2(pt[1],pt[0]) + tf_a
-                    tf_out_x = self.center[0] + pt[0] + (max_r * tf_r * math.cos(a))
-                    tf_out_y = self.center[1] + pt[1] + (max_r * tf_r * math.sin(a))
-                    tf_out_z = pt[2] * (1+tf_z)
-                    out = self.output_scale.transform(np.array([tf_out_x,tf_out_y,tf_out_z])[:self.dim_output].reshape(1,-1)).squeeze()[:self.dim_output]
-                    #if not self.train:
-                    #    pdb.set_trace()
-                    #out = self.output_scale.transform(np.array([aff_data[sample_keys[sk[s]]][-1][:self.dim_output]]).reshape(1,-1)).squeeze()
-                    output_list.append(out)
-                    #output_list.append([tf_out_x,tf_out_y])
+            for n in range(self.num_samples_per_class * self.sample_size):
+                negative_list.append(self.inputs[neg_keys[t][n]].reshape((1024,14,14)).transpose())
+                input_list.append(self.inputs[pos_keys[t][n]].reshape((1024,14,14)).transpose())
+                pt1 = np.array(pos_affs[t][n])
+                pt = pt1 - self.center
+                r1 = np.sqrt(pt[0]**2 + pt[1]**2)
+                #r = r1 * (1+tf_r)
+                a = math.atan2(pt[1],pt[0]) + tf_a
+                tf_out_x = self.center[0] + pt[0] + (max_r * tf_r * math.cos(a))
+                tf_out_y = self.center[1] + pt[1] + (max_r * tf_r * math.sin(a))
+                tf_out_z = pt[2] * (1+tf_z)
+                out = self.output_scale.transform(np.array([tf_out_x,tf_out_y,tf_out_z])[:self.dim_output].reshape(1,-1)).squeeze()[:self.dim_output]
+                output_list.append(out)
             init_inputs[t] = np.stack(input_list)
             neg_inputs[t] = np.stack(negative_list)
             outputs[t] = np.stack(output_list)
-            selected_keys.append(sel_keys)
-        #pdf_data = np.concatenate(pdf_data)
-        stats = []
-        #for i in range(pdf_data.shape[-1]):
-        #    stats.append(norm.fit(pdf_data[:,i]))
-        return init_inputs, neg_inputs, outputs, selected_keys, stats
+        return init_inputs, neg_inputs, outputs, pos_keys, neg_keys
 
     def project_tf(self, name_spt, tf):
         spt_inputs = np.zeros([self.num_samples_per_class * self.sample_size, 14,14,1024])

@@ -100,12 +100,16 @@ def main():
     dim = db_train.dim_input
     if True:
         config = [
-            ('linear', [dim,dim,True]),
+            ('linear', [128,1024,True]),
             ('relu', [True]),
-            ('linear', [1,dim,True]),
+            ('linear', [1,128,True]),
             ('relu', [True]),
-            ('reshape',[196]),
+            ('reshape', [196]),
+            ('bn', [196]),
             ('linear', [196,196,True]),
+            ('relu', [True]),
+            ('bn', [196]),
+            ('linear', [1,196,True])
         ]
         maml = Meta(args, config, dim_output, None, None).to(device)
         maml.loss_fn = maml.avg_loss
@@ -155,7 +159,7 @@ def main():
     print(maml)
     print('Total trainable tensors:', num)
 
-    losses,training = [],[]
+    losses,ft_training,pt_training = [],[],[]
     k_spt = args.k_spt * sample_size
     max_grad = 0
     for epoch in range(args.epoch):
@@ -168,10 +172,11 @@ def main():
                                      torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device), torch.from_numpy(n_spt).float().to(device)
 
         if args.meta == 1:
-            acc, loss, train_acc, grad = maml.class_test(n_spt, x_spt, y_spt, x_qry, y_qry,debug=epoch>25)
+            acc, loss, ft_train_acc, pt_train_acc, grad = maml.class_test(n_spt, x_spt, y_spt, x_qry, y_qry,debug=epoch>25)
             #acc, loss, train_acc, grad = maml.class_forward(n_spt, x_spt, y_spt, x_qry, y_qry,debug=epoch>25)
             losses.append(acc)
-            training.append(train_acc)
+            pt_training.append(pt_train_acc)
+            ft_training.append(ft_train_acc)
             max_grad = max(max_grad, grad)
         else:
             train_loss,test_loss,_,grad = maml(x_spt, y_spt,x_qry,y_qry)
@@ -181,7 +186,8 @@ def main():
 
         if epoch % 30 == 0:
             print('step:', epoch, '\ttesting  loss:', np.array(losses).mean(axis=0))
-            print('step:', epoch, '\ttraining loss:', np.array(training).mean(axis=0))
+            print('step:', epoch, '\tft loss:', np.array(ft_training).mean(axis=0))
+            print('step:', epoch, '\tpt loss:', np.array(pt_training).mean(axis=0))
             print('max grad: ' + str(max_grad))
             losses,training = [],[]
             max_grad = 0
@@ -189,7 +195,7 @@ def main():
         if epoch % 1000 == 0:  # evaluation
             torch.save(maml.state_dict(), save_path + str(epoch%2000) + "_meta" + str(args.meta) + "_polar" + str(args.polar) + "-rv.pt")
             test_losses = []
-            batch_x,n_spt,batch_y,names,dist = db_test.next()
+            batch_x,n_spt,batch_y,pos_keys,neg_keys = db_test.next()
             x_spt = batch_x[:,:k_spt,:]
             y_spt = batch_y[:,:k_spt,:]
             x_qry = batch_x[:,k_spt:,:]
@@ -198,9 +204,7 @@ def main():
                                          torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device), torch.from_numpy(n_spt).float().to(device)
 
             t = 0
-            for x_spt_one, y_spt_one, x_qry_one, y_qry_one, n_spt_one, names_one in zip(x_spt,y_spt,x_qry,y_qry,n_spt,names):
-                n_spt = names_one[:k_spt]
-                n_qry = names_one[k_spt:]
+            for x_spt_one, y_spt_one, x_qry_one, y_qry_one, n_spt_one, pos_one, neg_one in zip(x_spt,y_spt,x_qry,y_qry,n_spt,pos_keys,neg_keys):
                 if args.meta == 1:
                     _,w,loss,_ = maml.class_tune4(n_spt_one, x_spt_one,y_spt_one,x_qry_one,y_qry_one)
                     test_losses.append(loss)
@@ -210,7 +214,7 @@ def main():
                 #if not CLUSTER:
                 if epoch % 10000 == 0: 
                     for i in range(x_spt_one.shape[0]):
-                        name = n_spt[i]
+                        name = pos_one[i]
                         cam1 = get_CAM(w[0][i])
                         if len(w) > 1:
                             cam2 = get_CAM(w[1][i])
@@ -246,7 +250,6 @@ def main():
                 t+=1
 
             print('Test Loss:', np.array(test_losses).mean(axis=0))
-            pdb.set_trace()
             
 
 
