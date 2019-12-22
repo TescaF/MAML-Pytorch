@@ -39,7 +39,7 @@ def img_polar_tf(img):
 
 def main():
 
-    CLUSTER = False
+    CLUSTER = True
 
     home = expanduser("~")
     if CLUSTER:
@@ -211,8 +211,8 @@ def main():
                 else:
                     train_loss,test_loss,w,_ = maml.finetuning(x_spt_one, y_spt_one,x_qry_one,y_qry_one)
                     test_losses.append(test_loss)
-                #if not CLUSTER:
-                if epoch % 10000 == 0: 
+                #if epoch % 10000 == 0: 
+                if not CLUSTER:
                     for i in range(x_spt_one.shape[0]):
                         name = pos_one[i]
                         cam1 = get_CAM(w[0][i])
@@ -259,7 +259,7 @@ if __name__ == '__main__':
     argparser.add_argument('--meta', type=int, help='epoch number', default=1)
     argparser.add_argument('--exclude', type=int, help='epoch number', default=0)
     argparser.add_argument('--polar', type=int, help='epoch number', default=0)
-    argparser.add_argument('--sample_size', type=int, help='epoch number', default=30)
+    argparser.add_argument('--sample_size', type=int, help='epoch number', default=10)
     argparser.add_argument('--epoch', type=int, help='epoch number', default=100001)
     argparser.add_argument('--k_spt', type=int, help='k shot for support set', default=1)
     argparser.add_argument('--k_qry', type=int, help='k shot for query set', default=3)

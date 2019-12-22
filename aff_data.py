@@ -31,6 +31,7 @@ class Affordances:
         :param k_qry:
         :param imgsz:
         """
+        self.CLUSTER = CLUSTER
         self.grasp = grasp
         self.inputs = inputs
         self.px_to_cm = 0.5/7.6
@@ -40,11 +41,14 @@ class Affordances:
         self.rand = RandomState(222)
         self.affs = []
         self.sample_size = samples
-        self.aff_dir = "/home/tesca/data/part-affordance-dataset/tools/"
         fts_loc = "/home/tesca/data/part-affordance-dataset/features/" + mode + "_resnet_pool_fts-14D.pkl"
         #fts_loc = "/home/tesca/data/part-affordance-dataset/features/resnet_fts.pkl"
         #fts_loc = "/home/tesca/data/part-affordance-dataset/features/resnet_polar_fts.pkl"
-        if not CLUSTER:
+        if CLUSTER:
+            self.aff_dir = os.path.expanduser("~") + "/data/test_set/"
+        else:
+            self.aff_dir = os.path.expanduser("~") + "/data/part-affordance-dataset/tools/"
+        if self.inputs is None:
             with open(fts_loc, 'rb') as handle:
                 self.inputs = pickle.load(handle)       #dict(img) = [[4096x1], ... ]
         categories = list(sorted(set([k.split("_")[0] for k in self.inputs.keys()])))
@@ -214,6 +218,7 @@ class Affordances:
                     spt_input_list.append(fts.reshape((1024,14,14)).transpose())
                     qry_output_list.append(np.matrix([0,0]))
                     qry_input_list.append(fts.reshape((1024,14,14)).transpose())
+                    print(sample_keys[sk[s]] + ": " + str(out))
                 else:
                     qry_output_list.append(np.matrix([0,0]))
                     qry_input_list.append(fts.reshape((1024,14,14)).transpose())
@@ -233,7 +238,10 @@ class Affordances:
         # Get query images
 
     def get_grasp_normal(self, img_name):
-        label = scipy.io.loadmat(self.aff_dir + img_name.split("_00")[0] + "/" + img_name + "_label.mat")
+        if self.CLUSTER:
+            label = scipy.io.loadmat(self.aff_dir + img_name + "_label.mat")
+        else:
+            label = scipy.io.loadmat(self.aff_dir + img_name.split("_00")[0] + "/" + img_name + "_label.mat")
         img_affs = label['gt_label']
 
         aff_pts = np.matrix([(i,j) for i in range(img_affs.shape[0]) for j in range(img_affs.shape[1]) if img_affs[i,j] > 1])
@@ -276,7 +284,10 @@ class Affordances:
         '''tf_x = tf.pose.position.x 
         tf_y = -tf.pose.position.z
         tf_z = tf.pose.position.y'''
-        pose = np.matrix([[tf.pose.position.x,tf.pose.position.y,tf.pose.position.z]])
+        if isinstance(tf, list):
+            pose = np.matrix([tf[0]])
+        else:
+            pose = np.matrix([[tf.pose.position.x,tf.pose.position.y,tf.pose.position.z]])
         tf_x, tf_y = np.array(np.dot(pose,self.grasp[1])).squeeze(0).tolist()
         tf_r = math.sqrt(tf_x**2.0 + tf_y**2.0)
         tf_ang = math.atan2(tf_y, tf_x)
@@ -286,14 +297,14 @@ class Affordances:
         #print("a: " + str(a))
 
         # Convert cm to standard frame
-        ee_cm = np.array([math.cos(a) * tf_r * 100.0 / self.px_to_cm, math.sin(a) * tf_r * 100.0 / self.px_to_cm]) + np.array(self.center[:2])
-        ee_std = self.output_scale.transform(np.array(ee_cm).reshape(1,-1)).squeeze(0)
-        #ee_std = [math.cos(a) * tf_r * 100.0 * self.cm_to_std[0], math.sin(a) * tf_r * 100.0 * self.cm_to_std[1]]
+        #ee_cm = np.array([math.cos(a) * tf_r * 100.0 / self.px_to_cm, math.sin(a) * tf_r * 100.0 / self.px_to_cm]) + np.array(self.center[:2])
+        #ee_std = self.output_scale.transform(np.array(ee_cm).reshape(1,-1)).squeeze(0)
+        ee_std = [math.cos(a) * tf_r * 100.0 * self.cm_to_std[0], math.sin(a) * tf_r * 100.0 * self.cm_to_std[1]]
         #print("new: " + str(ee_std))
         #print("old: " + str(o_ee_std))
         if self.grasp[0] == "end":
             ee_std -= grasp_diff
-        centering = self.output_scale.transform(np.array(center).reshape(1,-1)).squeeze()
+        #centering = self.output_scale.transform(np.array(center).reshape(1,-1)).squeeze()
         #ee_std -= centering
 
         # Testing
@@ -301,8 +312,8 @@ class Affordances:
             img[pt[0,0],pt[0,1]] = (0,0,0)
         for pt in grasp_clust:
             img[pt[0,0],pt[0,1]] = (255,255,255)'''
-        #ee_inv = self.inverse_project(img_name, ee_std)
-        #print(str([tf.pose.position.x,tf.pose.position.z]) + " -> " + str(ee_inv))
+        ee_inv = self.inverse_project(img_name, ee_std)
+        print(str([tf_x,tf_y]) + " -> " + str(ee_inv))
         '''img = cv.imread('/home/tesca/data/part-affordance-dataset/center_tools/' + img_name + '_center.jpg')
         img2 = cv.imread('/home/tesca/data/part-affordance-dataset/tools/' + img_name.split("_00")[0] + '/' + img_name + '_rgb.jpg')
         ee = self.output_scale.inverse_transform(np.array(ee_std-centering).reshape(1,-1)).squeeze(0)
@@ -327,12 +338,12 @@ class Affordances:
         #centering = self.output_scale.transform(np.array(center).reshape(1,-1)).squeeze()
         #pt += centering
 
-        #inv_pt = np.divide(pt, self.cm_to_std)/100.0
-        ee_px = self.output_scale.inverse_transform(np.array(pt).reshape(1,-1)).squeeze(0)
-        inv_pt = (np.array(ee_px)-np.array(self.center[:2])) * self.px_to_cm / 100.0
+        inv_pt = np.divide(pt, self.cm_to_std)/100.0
+        #ee_px = self.output_scale.inverse_transform(np.array(pt).reshape(1,-1)).squeeze(0)
+        #inv_pt = (np.array(ee_px)-np.array(self.center[:2])) * self.px_to_cm / 100.0
         pt_r = math.sqrt(inv_pt[0]**2.0 + inv_pt[1]**2.0)
         pt_ang = math.atan2(inv_pt[1], inv_pt[0])
-        a = align_normal - pt_ang
+        a = pt_ang - align_normal  #- pt_ang
         ee = [math.cos(a) * pt_r, math.sin(a) * pt_r]
 
         # Testing

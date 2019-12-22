@@ -55,7 +55,8 @@ def main():
                        samples=sample_size,
                        k_shot=args.k_spt,
                        k_qry=args.k_qry,
-                       dim_out=dim_output)
+                       dim_out=dim_output,
+                       grasp=None)
 
     db_test = Affordances(
                        CLUSTER=CLUSTER,
@@ -67,7 +68,8 @@ def main():
                        samples=sample_size,
                        k_shot=args.k_spt,
                        k_qry=args.k_qry,
-                       dim_out=dim_output)
+                       dim_out=dim_output,
+                       grasp=None)
 
     db_test.output_scale = db_train.output_scale
     if CLUSTER:
@@ -78,7 +80,22 @@ def main():
         save_path = os.getcwd() + '/data/models/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_exclude' + str(args.exclude) + '_epoch'
     print(str(db_train.dim_input) + "-D input")
     dim = db_train.dim_input
-    if args.polar == 1 and args.meta == 1:
+    if True:
+        config = [
+            ('linear', [128,1024,True]),
+            ('relu', [True]),
+            ('linear', [1,128,True]),
+            ('relu', [True]),
+            ('reshape', [196]),
+            ('bn', [196]),
+            ('linear', [196,196,True]),
+            ('relu', [True]),
+            ('bn', [196]),
+            ('linear', [1,196,True])
+        ]
+        maml = Meta(args, config, dim_output, None, None).to(device)
+        maml.loss_fn = maml.avg_loss
+    elif args.polar == 1 and args.meta == 1:
         config = [
             ('linear', [dim,dim,True]),
             ('leakyrelu', [0.01, True]),
@@ -93,7 +110,7 @@ def main():
         ]
         maml = Meta(args, config, dim_output, None, None).to(device)
         maml.loss_fn = maml.polar_loss
-    if args.polar == 0 and args.meta == 1:
+    elif args.polar == 0 and args.meta == 1:
         config = [
             ('linear', [dim,dim,True]),
             ('leakyrelu', [0.01, True]),
@@ -106,7 +123,7 @@ def main():
         ]
         maml = Meta(args, config, dim_output, None, None).to(device)
         maml.loss_fn = maml.avg_loss
-    if args.meta == 0:
+    elif args.meta == 0:
         config = [
             ('linear', [dim,dim,True]),
             ('leakyrelu', [0.01, True]),
@@ -124,11 +141,11 @@ def main():
     print(maml)
     print('Total trainable tensors:', num)
 
-    results_txt,losses,training = [],[],[]
+    results_txt,losses,pt_training,ft_training = [],[],[],[]
     k_spt = args.k_spt * sample_size
     max_grad = 0
     for epoch in range(args.epoch):
-        batch_x, n_spt, batch_y,_,dist = db_train.next()
+        batch_x, n_spt, batch_y,_,_ = db_train.next()
         x_spt = batch_x[:,:k_spt,:]
         y_spt = batch_y[:,:k_spt,:]
         x_qry = batch_x[:,k_spt:,:]
@@ -137,9 +154,10 @@ def main():
                                      torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device), torch.from_numpy(n_spt).float().to(device)
 
         if args.meta == 1:
-            acc, loss, train_acc, grad = maml.class_forward(n_spt, x_spt, y_spt, x_qry, y_qry,debug=epoch>25)
+            acc, loss, ft_train_acc, pt_train_acc, grad = maml.class_test(n_spt, x_spt, y_spt, x_qry, y_qry,debug=epoch>25)
             losses.append(acc)
-            training.append(train_acc)
+            pt_training.append(pt_train_acc)
+            ft_training.append(ft_train_acc)
             max_grad = max(max_grad, grad)
         else:
             train_loss,test_loss,_,grad = maml(x_spt, y_spt,x_qry,y_qry)
@@ -151,7 +169,7 @@ def main():
         if epoch % 1000 == 0:  # evaluation
             test_losses = []
             for _ in range(10):
-                batch_x,n_spt,batch_y,names,dist = db_test.next()
+                batch_x,n_spt,batch_y,pos_keys,neg_keys = db_test.next()
                 x_spt = batch_x[:,:k_spt,:]
                 y_spt = batch_y[:,:k_spt,:]
                 x_qry = batch_x[:,k_spt:,:]
@@ -160,11 +178,9 @@ def main():
                                              torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device), torch.from_numpy(n_spt).float().to(device)
 
                 t = 0
-                for x_spt_one, y_spt_one, x_qry_one, y_qry_one, n_spt_one, names_one in zip(x_spt,y_spt,x_qry,y_qry,n_spt,names):
-                    n_spt = names_one[:k_spt]
-                    n_qry = names_one[k_spt:]
+                for x_spt_one, y_spt_one, x_qry_one, y_qry_one, n_spt_one, pos_one, neg_ones in zip(x_spt,y_spt,x_qry,y_qry,n_spt,pos_keys,neg_keys):
                     if args.meta == 1:
-                        loss,w,_,_ = maml.class_tune3(n_spt_one, x_spt_one,y_spt_one,x_qry_one,y_qry_one)
+                        _,w,loss,_ = maml.class_tune4(n_spt_one, x_spt_one,y_spt_one,x_qry_one,y_qry_one)
                         test_losses.append(loss)
                     else:
                         loss,w,_ = maml.finetuning(x_spt_one, y_spt_one,x_qry_one,y_qry_one)
@@ -172,9 +188,9 @@ def main():
                     t+=1
 
             print('Test Loss:', np.array(test_losses).mean(axis=0))
-            results_txt.append("%0.6f" % (np.array(test_losses).mean(axis=0)))
-            #results_txt.append("%0.6f" % (np.array(test_losses).mean(axis=0)[-1]))
-    results_file = home + "/data/cross_val/meta" + str(args.meta) + "_ex" + str(args.exclude) + "_lmb" + str(args.lmb) + ".txt"
+            #results_txt.append("%0.6f" % (np.array(test_losses).mean(axis=0)))
+            results_txt.append("%0.6f" % (np.array(test_losses).mean(axis=0)[-1]))
+    results_file = home + "/data/cross_val/meta" + str(args.meta) + "_ex" + str(args.exclude) + "_rv" + ".txt"
     out_file = open(results_file, "a+")
     out_file.write(("%0.3f" % args.update_lr) + ", " + ("%0.5f" % args.meta_lr) + ", " + str(results_txt) + '\n')
     out_file.close()
