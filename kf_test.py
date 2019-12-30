@@ -163,16 +163,13 @@ def main():
     print(str(db_tune.dim_input) + "-D input")
     dim = db_tune.dim_input
     config = [
-        ('linear', [128,1024,True]),
-        ('relu', [True]),
-        ('linear', [1,128,True]),
-        ('relu', [True]),
-        ('reshape', [196]),
-        ('bn', [196]),
-        ('linear', [196,196,True]),
-        ('relu', [True]),
-        ('bn', [196]),
-        ('linear', [1,196,True])
+            ('linear', [128,1024,True]),
+            ('relu', [True]),
+            ('linear', [1,128,True]),
+            ('relu', [True]),
+            ('reshape', [196]),
+            ('bn', [196]),
+            ('linear', [196,196,True])
     ]
     '''('linear', [dim,dim,True]),
     ('leakyrelu', [0.01, True]),
@@ -230,6 +227,7 @@ def main():
                         line = kf_file[k_line].split(",")
                     else:
                         line = []
+                cam_path = os.path.expanduser("~") + '/data/cam/ex' + str(exclude_idx) + '/demo' + str(demo_num) + '/'
             else:
                 tf_bag = rosbag.Bag(tf_path)
                 for topic, msg, t in tf_bag.read_messages(topics=['eef_pose_j2s7s300_link_base']):
@@ -242,11 +240,17 @@ def main():
             out_txt,tf_pred,obj_names = [],[],[]
             for tf in tf_list:
                 x_spt,x_qry,n_spt,y_spt,y_qry,names_qry = db_tune.project_tf(args.name, tf)
-                x_spt, y_spt, x_qry, y_qry, n_spt = torch.from_numpy(x_spt).float().to(device), torch.from_numpy(y_spt).float().to(device), \
-                                                     torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device), torch.from_numpy(n_spt).float().to(device)
+                #x_spt, y_spt, x_qry, y_qry, n_spt = torch.from_numpy(x_spt).float().to(device), torch.from_numpy(y_spt).float().to(device), \
+                #                                     torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device), torch.from_numpy(n_spt).float().to(device)
+                for i in range(len(names_qry[10:20])):
+                    pos = db_tune.output_scale.inverse_transform(np.array(y_spt[i]).reshape(1,-1)).squeeze(0)
+                    img = cv.imread('/u/tesca/data/center_tools/' + names_qry[10 + i] + '_center.jpg')
+                    cv.circle(img,(int(pos[1]),int(pos[0])),5,[0,255,255])
+                    cv.imwrite(cam_path + names_qry[i] + '-kf_' + str(tf_i) + '.jpg', img)
+                '''
                 loss,w,all_losses,res = maml.class_tune4(n_spt, x_spt,y_spt,x_qry,y_qry)
-                print(all_losses[1])
-                print(all_losses[2])
+                #print(all_losses[1])
+                #print(all_losses[2])
                 invs = []
                 print("KF " + str(tf_i) + " training loss: " + str(np.array(loss)))
                 #inv_spt = db_tune.inverse_project(names_qry[21],res[21].cpu().detach().numpy())
@@ -272,14 +276,16 @@ def main():
 
                     #print(names_qry[i] + ": " + str(pos1) + " " + str(pos))
 
-                    if not CLUSTER:
+                    if CLUSTER:
+                        img = cv.imread('/u/tesca/data/center_tools/' + names_qry[i] + '_center.jpg')
+                    else:
                         img = cv.imread('/home/tesca/data/part-affordance-dataset/center_tools/' + names_qry[i] + '_center.jpg')
-                        if img is not None:
-                            height, width, _ = img.shape
-                            heatmap1 = cv.applyColorMap(cv.resize(cam1.transpose(),(width, height)), cv.COLORMAP_JET)
-                            result1 = heatmap1 * 0.3 + img * 0.5
-                            cv.circle(result1,(int(pos[1]),int(pos[0])),5,[0,255,255])
-                            cv.imwrite(cam_path + names_qry[i] + '-kf_' + str(tf_i) + '.jpg', result1)
+                    if img is not None:
+                        height, width, _ = img.shape
+                        heatmap1 = cv.applyColorMap(cv.resize(cam1.transpose(),(width, height)), cv.COLORMAP_JET)
+                        result1 = heatmap1 * 0.3 + img * 0.5
+                        cv.circle(result1,(int(pos[1]),int(pos[0])),5,[0,255,255])
+                        cv.imwrite(cam_path + names_qry[i] + '-kf_' + str(tf_i) + '.jpg', result1)
                 print("Loss/Median/Mean/Variance")
                 for o in range(len(tf_pred)):
                     med = np.median(np.array(tf_pred[o][tf_i]),axis=0)
@@ -287,8 +293,8 @@ def main():
                     var = np.var(np.array(tf_pred[o][tf_i]),axis=0)
                     stats = obj_names[o] + ": " + str(np.array([loss])) + " " + str(np.array(med)) + " " + str(np.array(mean)) + " " + str(np.array(var))
                     print(stats)
-                    out_txt[o][tf_i] = "KF " + str(tf_i) + "(loss/median/mean/variance)" + '\n' + stats + '\n' + out_txt[o][tf_i] # + ('%s;' % ','.join(map(str,out_txt[0][tf_i][-1])))
-                print(invs[10:20])
+                    out_txt[o][tf_i] = "KF " + str(tf_i) + "(loss/median/mean/variance)" + '\n' + stats + '\n' + out_txt[o][tf_i] # + ('%s;' % ','.join(map(str,out_txt[0][tf_i][-1])))'''
+                #print(invs[10:20])
                 tf_i += 1
             print("Writing transforms to file")
             for tgt_i in range(len(out_txt)):

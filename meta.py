@@ -96,7 +96,7 @@ class Meta(nn.Module):
 
     def avg_loss(self, logits, y):
         pred = self.avg_pred(logits)
-        return F.mse_loss(pred,y)
+        return torch.mean(torch.sum((pred-y)**2.0,dim=1)) #F.mse_loss(pred,y)
 
     def direct_update(self, x_spt, y_spt, x_qry, y_qry):
         # Update
@@ -143,50 +143,57 @@ class Meta(nn.Module):
 
         for i in range(task_num):
             full_set = torch.cat([x_spt[i],x_qry[i],n_spt[i]])
-            tgt_set = torch.cat([torch.ones(x_spt[i].shape[0] + x_qry[i].shape[0]).long().cuda(), torch.zeros(n_spt[i].shape[0]).long().cuda()]).reshape(-1,1)
+            tgt_set = torch.cat([torch.ones(x_spt[i].shape[0] + x_qry[i].shape[0]).long().cuda(), torch.zeros(n_spt[i].shape[0]).long().cuda()]) #.reshape(-1,1)
 
             with torch.no_grad():
-                logits_q = self.net(x_qry[i], vars=None, post_hook=hook)
+                logits_q = self.net(x_qry[i], vars=None) #, post_hook=hook)
                 loss_q = self.loss_fn(logits_q, y_qry[i])
                 test_corrects[0] += loss_q.item()
 
             #for k in range(self.update_step):
-            k = 0
+            '''k = 0
             while k < self.update_step or sum_grad > 1:
                 ## Get classification loss
-                logits_a = sig(self.net(full_set, vars=(None if k==0 else s_weights)) - 1)
+                logits_a = sig(torch.sum(self.net(full_set, vars=(None if k==0 else s_weights)),dim=1) - 1)
                 loss_a = F.cross_entropy(torch.stack([1-logits_a,logits_a],dim=1), tgt_set)
                 grad = list(torch.autograd.grad(loss_a, (self.net.parameters() if k==0 else s_weights)))
                 s_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, (self.net.parameters() if k==0 else s_weights))))
                 sum_grad = 0
                 for g in grad:
                     sum_grad += g.norm(2).item()
-                k += 1
+                k += 1'''
 
             for k in range(self.update_step):
-                logits_a = sig(self.net(full_set, vars=s_weights) - 1)
+                #logits_a = sig(self.net(full_set, vars=s_weights) - 1)
+                logits_a = sig(torch.sum(self.net(full_set, vars=(None if k==0 else s_weights)),dim=1) - 1)
                 loss_a = F.cross_entropy(torch.stack([1-logits_a,logits_a],dim=1), tgt_set)
+                ft_train_corrects[k] += loss_a.item()
+                #grad = list(torch.autograd.grad(loss_a, (self.net.parameters() if k==0 else s_weights)))
+                #s_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, (self.net.parameters() if k==0 else s_weights))))
+
                 ## Get location loss
-                logits_r = self.net(x_spt[i], vars=s_weights, post_hook=hook)
+                #logits_r = self.net(x_spt[i], vars=s_weights) #, post_hook=hook)
+                logits_r = self.net(x_spt[i], vars=(None if k==0 else s_weights)) #, post_hook=hook)
                 loss_r = self.loss_fn(logits_r, y_spt[i])
                 pt_train_corrects[k] += loss_r.item()
-                ft_train_corrects[k] += loss_a.item()
 
                 #bal = 0.7
-                loss_total = loss_a + loss_r #(bal * loss_a) + ((1.0 - bal) * loss_r)
-                #loss_total = loss_a + loss_r
-                grad = list(torch.autograd.grad(loss_total, s_weights)) #(self.net.parameters() if k==0 else s_weights)))
-                s_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, s_weights)))
+                #loss_total = loss_a + loss_r #(bal * loss_a) + ((1.0 - bal) * loss_r)
+                loss_total = loss_a + loss_r
+                #grad = list(torch.autograd.grad(loss_r, s_weights))
+                #s_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, s_weights)))
+                grad = list(torch.autograd.grad(loss_total, (self.net.parameters() if k==0 else s_weights)))
+                s_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, (self.net.parameters() if k==0 else s_weights))))
 
                 ## Get test loss
                 with torch.no_grad():
-                    logits_q = self.net(x_qry[i], vars=s_weights, post_hook=hook)
+                    logits_q = self.net(x_qry[i], vars=s_weights) #, post_hook=hook)
                     loss_q = self.loss_fn(logits_q, y_qry[i])
                     test_corrects[k+1] += loss_q.item()
-                del loss_r, logits_r
+                del loss_a, logits_a, loss_r, logits_r
 
             ## Get post-tuning losses for location objectives
-            logits_q = self.net(x_qry[i], vars=s_weights, bn_training=True, post_hook=hook)
+            logits_q = self.net(x_qry[i], vars=s_weights, bn_training=True) #, post_hook=hook)
             losses_q += self.loss_fn(logits_q, y_qry[i])
             del s_weights,logits_q
             torch.cuda.empty_cache()
@@ -402,23 +409,23 @@ class Meta(nn.Module):
         ft_corrects = [0 for _ in range(self.update_step_test + 1)]
 
         full_set = torch.cat([x_spt,x_qry,n_spt])
-        tgt_set = torch.cat([torch.ones(x_spt.shape[0] + x_qry.shape[0]).long().cuda(), torch.zeros(n_spt.shape[0]).long().cuda()]).reshape(-1,1)
+        tgt_set = torch.cat([torch.ones(x_spt.shape[0] + x_qry.shape[0]).long().cuda(), torch.zeros(n_spt.shape[0]).long().cuda()]) #.reshape(-1,1)
 
         with torch.no_grad():
-            logits_q = net(x_qry, vars=net.parameters(), post_hook=hook)
+            logits_q = net(x_qry, vars=net.parameters()) #, post_hook=hook)
             loss_q1 = self.loss_fn(logits_q, y_qry)
             test_corrects[0] += loss_q1.item()
 
-            logits_a = sig(net(full_set, vars=net.parameters()) - 1)
+            logits_a = sig(torch.sum(net(full_set, vars=net.parameters()),dim=1) - 1)
             loss_a = F.cross_entropy(torch.stack([1-logits_a,logits_a],dim=1), tgt_set)
             ft_corrects[0] += loss_a.item()
 
             ## Get location loss
-            logits_r = net(x_spt, vars=net.parameters(), post_hook=hook)
+            logits_r = net(x_spt, vars=net.parameters()) #, post_hook=hook)
             loss_r = self.loss_fn(logits_r, y_spt)
             pt_corrects[0] += loss_r.item()
 
-        k = 0
+        '''k = 0
         while k < self.update_step or sum_grad > 1:
             ## Get classification loss
             logits_a = sig(net(full_set, vars=(None if k==0 else s_weights)) - 1)
@@ -428,30 +435,33 @@ class Meta(nn.Module):
             sum_grad = 0
             for g in grad:
                 sum_grad += g.norm(2).item()
-            k += 1
+            k += 1'''
 
         for k in range(self.update_step_test):
-            logits_a = sig(net(full_set, vars=s_weights) - 1)
+            #logits_a = sig(net(full_set, vars=s_weights) - 1)
+            logits_a = sig(torch.sum(net(full_set, vars=(None if k==0 else s_weights)),dim=1) - 1)
             #logits_a = sig(net(full_set, vars=(None if k==0 else s_weights)) - 1)
             loss_a = F.cross_entropy(torch.stack([1-logits_a,logits_a],dim=1), tgt_set)
             ft_corrects[k+1] += loss_a.item()
+            #grad = list(torch.autograd.grad(loss_a, (net.parameters() if k==0 else s_weights))) 
+            #grad = list(torch.autograd.grad(loss_total, (net.parameters() if k==0 else s_weights))) 
+            #s_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, (net.parameters() if k==0 else s_weights))))
 
             ## Get location loss
-            logits_r = net(full_set, vars=s_weights, post_hook=hook)[:x_spt.shape[0]]
-            #logits_r2 = net(x_spt, vars=s_weights, post_hook=hook)
-            #logits_r = net(x_spt, vars=(None if k==0 else s_weights), post_hook=hook)
+            #logits_r = net(full_set, vars=s_weights)[:x_spt.shape[0]]
+            logits_r = net(full_set, vars=(None if k==0 else s_weights))[:x_spt.shape[0]]
             loss_r = self.loss_fn(logits_r, y_spt)
             pt_corrects[k+1] += loss_r.item()
 
             loss_total = loss_a + loss_r 
-            grad = list(torch.autograd.grad(loss_total, s_weights)) 
-            #grad = list(torch.autograd.grad(loss_total, (net.parameters() if k==0 else s_weights))) 
-            s_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, s_weights)))
-            #s_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, (net.parameters() if k==0 else s_weights))))
+            #grad = list(torch.autograd.grad(loss_r, s_weights[-2:],allow_unused=True)) #(net.parameters() if k==0 else s_weights))) 
+            grad = list(torch.autograd.grad(loss_total, (net.parameters() if k==0 else s_weights))) 
+            #s_weights[-2:] = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, s_weights[-2:])))
+            s_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, (net.parameters() if k==0 else s_weights))))
 
             ## Get test loss
             with torch.no_grad():
-                logits_q = net(x_qry, vars=s_weights, post_hook=hook)
+                logits_q = net(x_qry, vars=s_weights) #, post_hook=hook)
                 loss_q = self.loss_fn(logits_q, y_qry)
                 test_corrects[k+1] += loss_q.item()
             del loss_r, logits_r
@@ -460,7 +470,7 @@ class Meta(nn.Module):
         spt_pred = self.avg_pred(spt_logits)
         qry_logits = net(x_qry, vars=s_weights, bn_training=True, post_hook=hook)
         qry_pred = self.avg_pred(qry_logits)'''
-        all_logits = net(full_set, vars=s_weights, post_hook=hook)
+        all_logits = net(full_set, vars=s_weights) #, post_hook=hook)
         loss = self.loss_fn(all_logits[:x_spt.shape[0]], y_spt).item()
         qry_pred = self.avg_pred(all_logits[x_spt.shape[0]:x_spt.shape[0] + x_qry.shape[0]])
 

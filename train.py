@@ -1,4 +1,6 @@
+import time
 import bz2
+import gzip
 import math
 import pdb
 #from torch.utils.tensorboard import SummaryWriter
@@ -11,7 +13,7 @@ import  argparse
 from scipy.stats import norm
 import torch.nn.functional as F
 from meta import Meta
-from aff_data import Affordances
+from cropped_aff_data import Affordances
 from os.path import expanduser
 from torch import nn
 
@@ -43,9 +45,10 @@ def main():
 
     home = expanduser("~")
     if CLUSTER:
-        fts_loc = home + "/data/fts.pbz2"
+        fts_loc = home + "/data/fts.pgz"
         print("Loading input files...")
-        with bz2.open(fts_loc, 'rb') as handle:
+        #with bz2.open(fts_loc, 'rb') as handle:
+        with gzip.open(fts_loc, 'rb') as handle:
             inputs = pickle.load(handle)       #dict(img) = [[4096x1], ... ]
         print("Done")
     else:
@@ -96,8 +99,7 @@ def main():
     else:
         device = torch.device('cuda')
         save_path = os.getcwd() + '/data/models/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_exclude' + str(args.exclude) + '_epoch'
-    print(str(db_train.dim_input) + "-D input")
-    dim = db_train.dim_input
+    #print(str(db_train.dim_input) + "-D input")
     if True:
         config = [
             ('linear', [128,1024,True]),
@@ -106,10 +108,10 @@ def main():
             ('relu', [True]),
             ('reshape', [196]),
             ('bn', [196]),
-            ('linear', [196,196,True]),
-            ('relu', [True]),
-            ('bn', [196]),
-            ('linear', [1,196,True])
+            ('linear', [196,196,True])
+            #('relu', [True]),
+            #('bn', [196]),
+            #('linear', [1,196,True])
         ]
         maml = Meta(args, config, dim_output, None, None).to(device)
         maml.loss_fn = maml.avg_loss
@@ -163,7 +165,9 @@ def main():
     k_spt = args.k_spt * sample_size
     max_grad = 0
     for epoch in range(args.epoch):
-        batch_x, n_spt, batch_y,_,dist = db_train.next()
+        t1 = time.time()
+        batch_x, n_spt, batch_y,pos_keys,neg_keys = db_train.next()
+        print(time.time() - t1)
         x_spt = batch_x[:,:k_spt,:]
         y_spt = batch_y[:,:k_spt,:]
         x_qry = batch_x[:,k_spt:,:]
@@ -211,42 +215,19 @@ def main():
                 else:
                     train_loss,test_loss,w,_ = maml.finetuning(x_spt_one, y_spt_one,x_qry_one,y_qry_one)
                     test_losses.append(test_loss)
-                #if epoch % 10000 == 0: 
-                if not CLUSTER:
+                if epoch % 10000 == 0: 
                     for i in range(x_spt_one.shape[0]):
-                        name = pos_one[i]
+                        name = pos_one[i].split("_label")[0]
                         cam1 = get_CAM(w[0][i])
-                        if len(w) > 1:
-                            cam2 = get_CAM(w[1][i])
-                        else:
-                            cam2 = None
-                        pref = name.split("_00")[0]
                         pos = db_train.output_scale.inverse_transform(y_spt_one[i].cpu().numpy().reshape(1,-1)).squeeze()
-                        if CLUSTER:
-                            img = cv.imread('/u/tesca/data/center_tools/' + name + '_center.jpg')
-                        else:
-                            img = cv.imread('/home/tesca/data/part-affordance-dataset/center_tools/' + name + '_center.jpg')
+                        img = cv.imread(home + '/data/cropped/' + name + '_rgb.jpg')
                         # Scale target point to position in 224x224 img
-                        mult = [(pos[0] * 224/img.shape[0])-112, (pos[1] * 224/img.shape[1])-112]
-                        r = 224*np.sqrt(mult[0]**2 + mult[1]**2)/(0.5*np.sqrt(2*(224**2)))
-                        a = (224/(2*np.pi)) * math.atan2(mult[1],mult[0]) % 224
-                        tf_pos = [r,a]
-                        tf_img = img_polar_tf(cv.resize(img, (224,224)))
                         if img is not None:
                             height, width, _ = img.shape
                             heatmap1 = cv.applyColorMap(cv.resize(cam1.transpose(),(width, height)), cv.COLORMAP_JET)
                             result1 = heatmap1 * 0.3 + img * 0.5
                             cv.circle(result1,(int(pos[1]),int(pos[0])),5,[255,255,0])
-                            if CLUSTER:
-                                cv.imwrite('/u/tesca/data/cam/ex' + str(args.exclude) + '/' + name + '_t' + str(t) + '-rv.jpg', result1)
-                            else:
-                                cv.imwrite('data/cam/polar' + str(args.polar) + 'meta' + str(args.meta) +'/ex' + str(args.exclude) + '/' + name + '_t' + str(t) + '.jpg', result1)
-                            if polar and (cam2 is not None):
-                                height, width, _ = tf_img.shape
-                                heatmap2 = cv.applyColorMap(cv.resize(cam2,(width, height)), cv.COLORMAP_JET)
-                                result2 = heatmap2 * 0.3 + tf_img * 0.5
-                                cv.circle(result2,(int(tf_pos[1]),int(tf_pos[0])),5,[255,255,0])
-                                cv.imwrite('data/cam/' + name + 'ex' + str(args.exclude) + '_CAM_polar.jpg', result2)
+                            cv.imwrite('/u/tesca/data/train_imgs/ex-' + str(args.exclude) + "_im-" + name + '_t' + str(t) + '-rv.jpg', result1)
                 t+=1
 
             print('Test Loss:', np.array(test_losses).mean(axis=0))

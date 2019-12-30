@@ -1,3 +1,4 @@
+import gzip
 import bz2
 import math
 import pdb
@@ -21,9 +22,11 @@ def main():
 
     home = expanduser("~")
     if CLUSTER:
-        fts_loc = home + "/data/fts.pbz2"
+        #fts_loc = home + "/data/fts.pbz2"
+        fts_loc = home + "/data/fts.pgz"
         print("Loading input files...")
-        with bz2.open(fts_loc, 'rb') as handle:
+        #with bz2.open(fts_loc, 'rb') as handle:
+        with gzip.open(fts_loc, 'rb') as handle:
             inputs = pickle.load(handle)       #dict(img) = [[4096x1], ... ]
         ex_list = ('saw', 'ladle', 'turner')
         rm_keys = [k for k in inputs.keys() if k.startswith(ex_list)]
@@ -189,7 +192,7 @@ def main():
 
             print('Test Loss:', np.array(test_losses).mean(axis=0))
             #results_txt.append("%0.6f" % (np.array(test_losses).mean(axis=0)))
-            results_txt.append("%0.6f" % (np.array(test_losses).mean(axis=0)[-1]))
+            results_txt.append("%0.6f" % (np.array(test_losses).mean(axis=0)[0][-1]))
     results_file = home + "/data/cross_val/meta" + str(args.meta) + "_ex" + str(args.exclude) + "_rv" + ".txt"
     out_file = open(results_file, "a+")
     out_file.write(("%0.3f" % args.update_lr) + ", " + ("%0.5f" % args.meta_lr) + ", " + str(results_txt) + '\n')
