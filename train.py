@@ -12,14 +12,15 @@ import  random, sys, pickle
 import  argparse
 from scipy.stats import norm
 import torch.nn.functional as F
-from meta import Meta
+from meta_class import Meta
 from cropped_aff_data import Affordances
 from os.path import expanduser
 from torch import nn
 
 def get_CAM(cam):
     cam = cam.reshape(14,14)
-    cam = torch.abs(cam)
+    #cam = torch.abs(cam)
+    cam = torch.max(cam, torch.tensor(0).cuda().float())
     cam = cam - torch.min(cam)
     cam_img = cam / torch.max(cam)
     cam_img = np.uint8(255 * cam_img.cpu().detach().numpy())
@@ -100,49 +101,31 @@ def main():
         device = torch.device('cuda')
         save_path = os.getcwd() + '/data/models/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_exclude' + str(args.exclude) + '_epoch'
     #print(str(db_train.dim_input) + "-D input")
-    if True:
+    if args.meta == 1:
         config = [
             ('linear', [128,1024,True]),
-            ('relu', [True]),
+            ('leakyrelu', [0.01,False]),
             ('linear', [1,128,True]),
-            ('relu', [True]),
             ('reshape', [196]),
             ('bn', [196]),
-            ('linear', [196,196,True])
+            ('leakyrelu', [0.01,False]),
+            ('linear', [196,196,True]),
+            ('bn', [196]),
+            ('leakyrelu', [0.01,False]),
+            ('linear', [4,196,True])
             #('relu', [True]),
             #('bn', [196]),
             #('linear', [1,196,True])
         ]
-        maml = Meta(args, config, dim_output, None, None).to(device)
+        maml = Meta(args, config, None).to(device)
         maml.loss_fn = maml.avg_loss
-    elif args.polar == 1 and args.meta == 1:
-        config = [
-            ('linear', [dim,dim,True]),
-            ('leakyrelu', [0.01, True]),
-            ('linear', [1,dim,True]),
-            ('leakyrelu', [0.01, True]),
-            ('reshape',[14,14]),
-            ('polar',[14,14]),
-            ('reshape',[196]),
-            ('linear', [196,196,True]),
-            ('leakyrelu', [0.01, True]),
-            ('linear', [1,196,True])
-        ]
-        maml = Meta(args, config, dim_output, None, None).to(device)
-        maml.loss_fn = maml.polar_loss
-    elif args.polar == 0 and args.meta == 1:
-        config = [
-            ('linear', [dim,dim,True]),
-            ('leakyrelu', [0.01, True]),
-            ('linear', [1,dim,True]),
-            ('leakyrelu', [0.01, True]),
-            ('reshape',[196]),
-            ('linear', [196,196,True]),
-            ('leakyrelu', [0.01, True]),
-            ('linear', [1,196,True])
-        ]
-        maml = Meta(args, config, dim_output, None, None).to(device)
-        maml.loss_fn = maml.avg_loss
+        if args.load == 1:
+            print("Loading model: ")
+            load_path = save_path + "0_meta" + str(args.meta) + "_polar" + str(args.polar) + ".pt"
+            print(load_path)
+            m = torch.load(load_path)
+            maml.load_state_dict(m)
+            maml.eval()
     elif args.meta == 0:
         config = [
             ('linear', [dim,dim,True]),
@@ -154,20 +137,17 @@ def main():
             ('leakyrelu', [0.01, True]),
             ('linear', [2,196,True])
         ]
-        maml = Meta(args, config, dim_output, F.mse_loss, None).to(device)
+        maml = Meta(args, config, dim_output, F.mse_loss).to(device)
 
     tmp = filter(lambda x: x.requires_grad, maml.parameters())
     num = sum(map(lambda x: np.prod(x.shape), tmp))
     print(maml)
     print('Total trainable tensors:', num)
 
-    losses,ft_training,pt_training = [],[],[]
+    test_losses,ft_training,pt_training = [],[],[]
     k_spt = args.k_spt * sample_size
-    max_grad = 0
     for epoch in range(args.epoch):
-        t1 = time.time()
         batch_x, n_spt, batch_y,pos_keys,neg_keys = db_train.next()
-        print(time.time() - t1)
         x_spt = batch_x[:,:k_spt,:]
         y_spt = batch_y[:,:k_spt,:]
         x_qry = batch_x[:,k_spt:,:]
@@ -176,29 +156,24 @@ def main():
                                      torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device), torch.from_numpy(n_spt).float().to(device)
 
         if args.meta == 1:
-            acc, loss, ft_train_acc, pt_train_acc, grad = maml.class_test(n_spt, x_spt, y_spt, x_qry, y_qry,debug=epoch>25)
-            #acc, loss, train_acc, grad = maml.class_forward(n_spt, x_spt, y_spt, x_qry, y_qry,debug=epoch>25)
-            losses.append(acc)
-            pt_training.append(pt_train_acc)
-            ft_training.append(ft_train_acc)
-            max_grad = max(max_grad, grad)
+            test_loss, loss_report = maml.forward(n_spt, x_spt, y_spt, x_qry, y_qry)
+            test_losses.append(loss_report[0])
+            pt_training.append(loss_report[1])
+            ft_training.append(loss_report[2])
         else:
             train_loss,test_loss,_,grad = maml(x_spt, y_spt,x_qry,y_qry)
-            losses.append(test_loss)
-            training.append(train_loss)
-            max_grad = max(max_grad, grad)
+            test_losses.append(test_loss)
+            pt_training.append(train_loss)
 
         if epoch % 30 == 0:
-            print('step:', epoch, '\ttesting  loss:', np.array(losses).mean(axis=0))
+            print('step:', epoch, '\ttesting loss:', np.array(test_losses).mean(axis=0))
             print('step:', epoch, '\tft loss:', np.array(ft_training).mean(axis=0))
             print('step:', epoch, '\tpt loss:', np.array(pt_training).mean(axis=0))
-            print('max grad: ' + str(max_grad))
-            losses,training = [],[]
-            max_grad = 0
+            test_losses,ft_training,pt_training = [],[],[]
 
-        if epoch % 1000 == 0:  # evaluation
-            torch.save(maml.state_dict(), save_path + str(epoch%2000) + "_meta" + str(args.meta) + "_polar" + str(args.polar) + "-rv.pt")
-            test_losses = []
+        if epoch % 500 == 0:  # evaluation
+            torch.save(maml.state_dict(), save_path + str(epoch%2000) + "_meta" + str(args.meta) + "_polar" + str(args.polar) + ".pt")
+            test_losses,ft_training,pt_training = [],[],[]
             batch_x,n_spt,batch_y,pos_keys,neg_keys = db_test.next()
             x_spt = batch_x[:,:k_spt,:]
             y_spt = batch_y[:,:k_spt,:]
@@ -210,33 +185,44 @@ def main():
             t = 0
             for x_spt_one, y_spt_one, x_qry_one, y_qry_one, n_spt_one, pos_one, neg_one in zip(x_spt,y_spt,x_qry,y_qry,n_spt,pos_keys,neg_keys):
                 if args.meta == 1:
-                    _,w,loss,_ = maml.class_tune4(n_spt_one, x_spt_one,y_spt_one,x_qry_one,y_qry_one)
-                    test_losses.append(loss)
+                    losses, cam, loss_report, pred = maml.tune(n_spt_one, x_spt_one,y_spt_one,x_qry_one,y_qry_one)
+                    test_losses.append(loss_report[0])
+                    pt_training.append(loss_report[1])
+                    ft_training.append(loss_report[2])
                 else:
                     train_loss,test_loss,w,_ = maml.finetuning(x_spt_one, y_spt_one,x_qry_one,y_qry_one)
                     test_losses.append(test_loss)
-                if epoch % 10000 == 0: 
+                if epoch % 2000 == 0: 
                     for i in range(x_spt_one.shape[0]):
                         name = pos_one[i].split("_label")[0]
-                        cam1 = get_CAM(w[0][i])
+                        cam_im = get_CAM(cam[0][i])
+                        out_im = get_CAM(cam[1][i])
                         pos = db_train.output_scale.inverse_transform(y_spt_one[i].cpu().numpy().reshape(1,-1)).squeeze()
                         img = cv.imread(home + '/data/cropped/' + name + '_rgb.jpg')
                         # Scale target point to position in 224x224 img
                         if img is not None:
                             height, width, _ = img.shape
-                            heatmap1 = cv.applyColorMap(cv.resize(cam1.transpose(),(width, height)), cv.COLORMAP_JET)
+                            heatmap1 = cv.applyColorMap(cv.resize(cam_im.transpose(),(width, height)), cv.COLORMAP_JET)
+                            heatmap_out = cv.applyColorMap(cv.resize(out_im.transpose(),(width, height)), cv.COLORMAP_JET)
                             result1 = heatmap1 * 0.3 + img * 0.5
+                            result3 = heatmap_out * 0.3 + img * 0.5
+                            g = "g4"
                             cv.circle(result1,(int(pos[1]),int(pos[0])),5,[255,255,0])
-                            cv.imwrite('/u/tesca/data/train_imgs/ex-' + str(args.exclude) + "_im-" + name + '_t' + str(t) + '-rv.jpg', result1)
+                            cv.imwrite('/u/tesca/data/' + g + '_imgs/min_t' + str(t) + '_ep' + str(epoch) + '_ex' + str(args.exclude) + "_" + name + '-cam.jpg', result1)
+                            cv.imwrite('/u/tesca/data/' + g + '_imgs/min_t' + str(t) + '_ep' + str(epoch) + '_ex' + str(args.exclude) + "_" + name + '-out.jpg', result3)
                 t+=1
 
             print('Test Loss:', np.array(test_losses).mean(axis=0))
+            print('Ft Loss:', np.array(ft_training).mean(axis=0))
+            print('Pt Loss:', np.array(pt_training).mean(axis=0))
+            test_losses,ft_training,pt_training = [],[],[]
             
 
 
 if __name__ == '__main__':
 
     argparser = argparse.ArgumentParser()
+    argparser.add_argument('--load', type=int, help='epoch number', default=0)
     argparser.add_argument('--meta', type=int, help='epoch number', default=1)
     argparser.add_argument('--exclude', type=int, help='epoch number', default=0)
     argparser.add_argument('--polar', type=int, help='epoch number', default=0)

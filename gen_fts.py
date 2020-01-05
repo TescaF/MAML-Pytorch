@@ -58,7 +58,7 @@ class ImageProc:
 
         aff_pts = np.matrix([(i,j) for i in range(img_affs.shape[0]) for j in range(img_affs.shape[1]) if img_affs[i,j] > 1 and img_affs[i,j] < 7])
         if aff_pts.shape[1] == 0:
-            pdb.set_trace()
+            return None
         clusters = sklearn.cluster.DBSCAN(eps=3, min_samples=10).fit_predict(aff_pts)
         aff_clust = [aff_pts[i] for i in range(len(aff_pts)) if clusters[i] > -1]
         ay, ax = np.median(aff_clust,axis=0).squeeze(0)
@@ -69,7 +69,7 @@ class ImageProc:
         cy, cx = np.median(grasp_clust,axis=0).squeeze(0)
 
         # Get edge normal
-        pca = PCA(n_components=1)
+        pca = PCA(n_components=2)
         pca_tf = pca.fit_transform(np.stack(grasp_clust))
         normal = math.atan2(pca.components_[0,1],pca.components_[0,0])
         grasp_reduced = pca.inverse_transform(pca_tf)
@@ -94,7 +94,7 @@ class ImageProc:
         ty, tx = np.array(grasp_reduced[t_idx])
 
         grasp_diff = np.array(output_scale.transform(np.array([ncy,ncx]).reshape(1,-1)) - output_scale.transform(np.array([ey,ex]).reshape(1,-1))).squeeze(0)
-        return [align_normal,(ey,ex),(cy,cx),(ncy,ncx),(ty,tx)]
+        return [align_normal,pca.explained_variance_ratio_,(ey,ex),(cy,cx),(ncy,ncx),(ty,tx)]
 
     def save_features(self):
 
@@ -108,7 +108,6 @@ class ImageProc:
             k = f.readlines()[0].decode()
             keys = ast.literal_eval(k)
         files = sorted([f for f in os.listdir(self.im_dir) if f.endswith(".mat") and not f in keys])#[4900:]
-        pdb.set_trace()
         for f in files:
             sys.stdout.write("\rFile %i of %i" %(c1, len(files)))
             sys.stdout.flush()
@@ -157,18 +156,24 @@ class ImageProc:
         return embedding.numpy()
 
 if __name__ == '__main__':
+    start = 9000
     proc = ImageProc()
     #proc.save_features()
-    pt_dict = dict()
+    with open(proc.im_dir + "tt.pkl", 'rb') as handle:
+        pt_dict = pickle.load(handle)
     files = sorted([f for f in os.listdir(proc.im_dir) if f.endswith(".mat")])
+    files = files[start:min(len(files),start+1000)]
     c1 = 0
     for f in files:
         sys.stdout.write("\rFile %i of %i" %(c1, len(files)))
         sys.stdout.flush()
         name = f.split("_label")[0]
+        #if name not in pt_dict.keys():
         data = proc.get_grasp_normal(name)
         pt_dict[name] = data
         c1 += 1
         if c1 % 10 == 0:
-            with open(proc.im_dir + "tt.pkl", 'wb') as handle:
+            with open(proc.im_dir + "tt_w_var_" + str(start) + ".pkl", 'wb') as handle:
                 pickle.dump(pt_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    with open(proc.im_dir + "tt_w_var_" + str(start) + ".pkl", 'wb') as handle:
+        pickle.dump(pt_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)

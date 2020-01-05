@@ -11,8 +11,8 @@ import  random, sys, pickle
 import  argparse
 from scipy.stats import norm
 import torch.nn.functional as F
-from meta import Meta
-from aff_data import Affordances
+from meta_class import Meta
+from cropped_aff_data import Affordances
 from os.path import expanduser
 from torch import nn
 
@@ -81,22 +81,20 @@ def main():
     else:
         device = torch.device('cuda')
         save_path = os.getcwd() + '/data/models/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_exclude' + str(args.exclude) + '_epoch'
-    print(str(db_train.dim_input) + "-D input")
-    dim = db_train.dim_input
     if True:
         config = [
             ('linear', [128,1024,True]),
-            ('relu', [True]),
+            ('leakyrelu', [0.01,False]),
             ('linear', [1,128,True]),
-            ('relu', [True]),
             ('reshape', [196]),
             ('bn', [196]),
+            ('leakyrelu', [0.01,False]),
             ('linear', [196,196,True]),
-            ('relu', [True]),
-            ('bn', [196]),
-            ('linear', [1,196,True])
+            ('bn', [196]), 
+            ('leakyrelu', [0.01,False]), 
+            ('linear', [2,196,True])
         ]
-        maml = Meta(args, config, dim_output, None, None).to(device)
+        maml = Meta(args, config, None).to(device)
         maml.loss_fn = maml.avg_loss
     elif args.polar == 1 and args.meta == 1:
         config = [
@@ -144,10 +142,10 @@ def main():
     print(maml)
     print('Total trainable tensors:', num)
 
-    results_txt,losses,pt_training,ft_training = [],[],[],[]
+    results_txt,test_losses,ft_training,pt_training = [],[],[],[]
     k_spt = args.k_spt * sample_size
     max_grad = 0
-    for epoch in range(args.epoch):
+    for epoch in range(1): #args.epoch):
         batch_x, n_spt, batch_y,_,_ = db_train.next()
         x_spt = batch_x[:,:k_spt,:]
         y_spt = batch_y[:,:k_spt,:]
@@ -157,11 +155,10 @@ def main():
                                      torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device), torch.from_numpy(n_spt).float().to(device)
 
         if args.meta == 1:
-            acc, loss, ft_train_acc, pt_train_acc, grad = maml.class_test(n_spt, x_spt, y_spt, x_qry, y_qry,debug=epoch>25)
-            losses.append(acc)
-            pt_training.append(pt_train_acc)
-            ft_training.append(ft_train_acc)
-            max_grad = max(max_grad, grad)
+            test_loss, loss_report = maml.forward(n_spt, x_spt, y_spt, x_qry, y_qry)
+            test_losses.append(loss_report[0])
+            pt_training.append(loss_report[1])
+            ft_training.append(loss_report[2])
         else:
             train_loss,test_loss,_,grad = maml(x_spt, y_spt,x_qry,y_qry)
             losses.append(test_loss)
@@ -170,7 +167,7 @@ def main():
 
         #if epoch == 10000:  # evaluation
         if epoch % 1000 == 0:  # evaluation
-            test_losses = []
+            test_losses,ft_training,pt_training = [],[],[]
             for _ in range(10):
                 batch_x,n_spt,batch_y,pos_keys,neg_keys = db_test.next()
                 x_spt = batch_x[:,:k_spt,:]
@@ -182,17 +179,22 @@ def main():
 
                 t = 0
                 for x_spt_one, y_spt_one, x_qry_one, y_qry_one, n_spt_one, pos_one, neg_ones in zip(x_spt,y_spt,x_qry,y_qry,n_spt,pos_keys,neg_keys):
-                    if args.meta == 1:
-                        _,w,loss,_ = maml.class_tune4(n_spt_one, x_spt_one,y_spt_one,x_qry_one,y_qry_one)
-                        test_losses.append(loss)
+                    if args.meta == 1: 
+                        losses, cam, loss_report, pred = maml.tune(n_spt_one, x_spt_one,y_spt_one,x_qry_one,y_qry_one) 
+                        test_losses.append(loss_report[0]) 
+                        pt_training.append(loss_report[1]) 
+                        ft_training.append(loss_report[2])
                     else:
                         loss,w,_ = maml.finetuning(x_spt_one, y_spt_one,x_qry_one,y_qry_one)
                         test_losses.append(loss)
                     t+=1
 
             print('Test Loss:', np.array(test_losses).mean(axis=0))
+            print('Ft Loss:', np.array(ft_training).mean(axis=0))
+            print('Pt Loss:', np.array(pt_training).mean(axis=0))
             #results_txt.append("%0.6f" % (np.array(test_losses).mean(axis=0)))
-            results_txt.append("%0.6f" % (np.array(test_losses).mean(axis=0)[0][-1]))
+            results_txt.append("%0.6f" % (np.array(test_losses).mean(axis=0)[-1]))
+            test_losses,ft_training,pt_training = [],[],[]
     results_file = home + "/data/cross_val/meta" + str(args.meta) + "_ex" + str(args.exclude) + "_rv" + ".txt"
     out_file = open(results_file, "a+")
     out_file.write(("%0.3f" % args.update_lr) + ", " + ("%0.5f" % args.meta_lr) + ", " + str(results_txt) + '\n')

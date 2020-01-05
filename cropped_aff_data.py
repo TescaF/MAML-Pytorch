@@ -61,7 +61,7 @@ class Affordances:
 
         # Load image affordance locations
         self.valid_keys, training_keys, all_vals = [],[],[]
-        with open(os.path.expanduser("~") + "/data/cropped/tt-1.pkl", 'rb') as handle:
+        with open(os.path.expanduser("~") + "/data/cropped/tt.pkl", 'rb') as handle:
             self.aff_pts = pickle.load(handle)      #dict(category) = [img1, img2, ...]
         with open(os.path.expanduser("~") + "/data/cropped_grasp_positions.pkl", 'rb') as handle:
             self.grasps = pickle.load(handle)      #dict(category) = [img1, img2, ...]
@@ -97,6 +97,8 @@ class Affordances:
         self.dim_output = dim_out
         self.output_scale = preprocessing.MinMaxScaler(feature_range=(-1,1))
         self.output_scale.fit(np.matrix([[0,0],[450,450]]))
+        self.tf_scale = preprocessing.MinMaxScaler(feature_range=(-1,1))
+        self.tf_scale.fit(np.matrix([[0,-225],[450,225]]))
         all_objs = list(sorted(set([k.split("_00")[0] for k in self.valid_keys])))
         if k_qry == -1:
             self.num_samples_per_class = len([o for o in all_objs if o.startswith(categories[exclude])])
@@ -140,41 +142,50 @@ class Affordances:
         # Each "batch" is an object class
         for t in range(self.batch_size):
             output_list,input_list,negative_list = [],[],[]
-            # use the pca version to calculate angle
+            # Select a transform for this batch
             tf_a = self.rand.uniform(-np.pi,np.pi)
             max_r = math.sqrt(2*(450.0**2.0))/2.0
-            tf_r = self.rand.uniform(0,0.25)
-            for n in range(self.num_samples_per_class * self.sample_size):
-                negative_list.append(self.inputs[neg_keys[t][n]].reshape((1024,14,14)).transpose())
-                input_list.append(self.inputs[pos_keys[t][n]].reshape((1024,14,14)).transpose())
-                #center = self.grasps[pos_keys[t][n]]
-                if pos_keys[t][n].split("_label")[0] in self.aff_pts.keys():
-                    # Centers: grasp end, grasp absolute center, grasp center, tooltip
-                    align_normal, c1, c2, c3, c4 = self.aff_pts[pos_keys[t][n].split("_label")[0]]
-                else:
-                    align_normal, grasp_diff, center = self.get_grasp_normal(pos_keys[t][n].split("_label")[0], grasp_aff=-1)
-                    c1, c2, c3, c4 = center
+            tf_r = self.rand.uniform(0,0.5)
+            # Number of objects per class
+            for c in range(self.num_samples_per_class):
+                samples = []
+                # Number of images per object
+                for n in range(self.sample_size):
+                    negative_list.append(self.inputs[neg_keys[t][(c*n)+n]].reshape((1024,14,14)).transpose())
+                    input_list.append(self.inputs[pos_keys[t][(c*n)+n]].reshape((1024,14,14)).transpose())
+                    #center = self.grasps[pos_keys[t][n]]
+                    if pos_keys[t][(c*n)+n].split("_label")[0] in self.aff_pts.keys() and not self.aff_pts[pos_keys[t][(c*n)+n].split("_label")[0]] is None:
+                        # Centers: grasp end, grasp absolute center, grasp center, tooltip
+                        align_normal, c1, c2, c3, c4 = self.aff_pts[pos_keys[t][(c*n)+n].split("_label")[0]]
+                    else:
+                        align_normal, grasp_diff, center = self.get_grasp_normal(pos_keys[t][(c*n)+n].split("_label")[0], grasp_aff=-1)
+                        c1, c2, c3, c4 = center
 
-                #pt = np.array(c4) - np.array(c3)
-                #r1 = np.sqrt(pt[0]**2 + pt[1]**2)
-                a = tf_a + align_normal
-                new_r = max_r * tf_r
+                    #pt = np.array(c4) - np.array(c3)
+                    #r1 = np.sqrt(pt[0]**2 + pt[1]**2)
+                    new_r = max_r * tf_r
+                    x = np.sqrt((c4[0]-c1[0])**2.0 + (c4[1]-c1[1])**2.0) + (new_r * math.sin(tf_a))
+                    y = new_r * math.cos(tf_a)
+                    a = tf_a + align_normal
 
-                tf_out_x = c4[0] + (new_r * math.cos(a))
-                tf_out_y = c4[1] + (new_r * math.sin(a))
+                    tf_out_x = c4[0] + (new_r * math.cos(a))
+                    tf_out_y = c4[1] + (new_r * math.sin(a))
 
+                    samples.append(np.array([x,y]))
                 '''name = pos_keys[t][n].split("_label")[0]
                 img = cv.imread('/u/tesca/data/cropped/' + name + '_rgb.jpg')
-                cv.circle(img,(int(pos_affs[t][n][1]),int(pos_affs[t][n][0])),5,[0,255,0])
-                cv.circle(img,(int(center[2][1]),int(center[2][0])),5,[255,0,0])
                 cv.circle(img,(int(tf_out_y),int(tf_out_x)),5,[0,0,255])
                 cv.imwrite('/u/tesca/data/train_imgs/t' + str(t) + "_im-" + name +'.jpg', img)'''
 
-                out = self.output_scale.transform(np.array([tf_out_x,tf_out_y]).reshape(1,-1)).squeeze()
-                output_list.append(out)
+                med_out = np.median(np.stack(samples),axis=0)
+                out = self.tf_scale.transform(med_out.reshape(1,-1)).squeeze()
+                #out = self.output_scale.transform(np.array([tf_out_x,tf_out_y]).reshape(1,-1)).squeeze()
+                for _ in range(self.sample_size):
+                    output_list.append(out)
             init_inputs[t] = np.stack(input_list)
             neg_inputs[t] = np.stack(negative_list)
             outputs[t] = np.stack(output_list)
+            #outputs[t] = np.repeat(np.expand_dims(np.mean(output_list,axis=0),axis=0), output_list.shape[0], axis=0)
         return init_inputs, neg_inputs, outputs, pos_keys, neg_keys
 
     def project_tf(self, name_spt, tf):

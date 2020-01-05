@@ -178,6 +178,7 @@ class Affordances:
             init_inputs[t] = np.stack(input_list)
             neg_inputs[t] = np.stack(negative_list)
             outputs[t] = np.stack(output_list)
+        pdb.set_trace()
         return init_inputs, neg_inputs, outputs, pos_keys, neg_keys
 
     def project_tf(self, name_spt, tf):
