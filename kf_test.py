@@ -1,3 +1,5 @@
+from scipy.stats import norm
+import gzip
 import math
 import pdb
 #from torch.utils.tensorboard import SummaryWriter
@@ -9,8 +11,8 @@ import  random, sys, pickle
 import  argparse
 from scipy.stats import norm
 import torch.nn.functional as F
-from meta import Meta
-from aff_data import Affordances
+from meta_class import Meta
+from cropped_aff_data import Affordances
 from copy import deepcopy
 
 def get_CAM(cam):
@@ -131,9 +133,9 @@ def main():
 
     if CLUSTER:
         device = torch.device('cuda:0')
-        fts_loc = os.path.expanduser("~") + "/data/fts.pbz2"
+        fts_loc = os.path.expanduser("~") + "/data/fts.pgz"
         print("Loading input files...")
-        with bz2.open(fts_loc, 'rb') as handle:
+        with gzip.open(fts_loc, 'rb') as handle:
             inputs = pickle.load(handle)       #dict(img) = [[4096x1], ... ]
         print("Done")
     else:
@@ -160,16 +162,17 @@ def main():
                        dim_out=dim_output,
                        grasp=grasp)
 
-    print(str(db_tune.dim_input) + "-D input")
-    dim = db_tune.dim_input
     config = [
-            ('linear', [128,1024,True]),
-            ('relu', [True]),
-            ('linear', [1,128,True]),
-            ('relu', [True]),
-            ('reshape', [196]),
-            ('bn', [196]),
-            ('linear', [196,196,True])
+        ('linear', [128,1024,True]),
+        ('leakyrelu', [0.01,False]),
+        ('linear', [1,128,True]),
+        ('reshape', [196]),
+        ('bn', [196]),
+        ('leakyrelu', [0.01,False]),
+        ('linear', [196,196,True]),
+        ('bn', [196]),
+        ('leakyrelu', [0.01,False]),
+        ('linear', [4,196,True])
     ]
     '''('linear', [dim,dim,True]),
     ('leakyrelu', [0.01, True]),
@@ -179,11 +182,11 @@ def main():
     ('linear', [196,196,True]),
     ('leakyrelu', [0.01, True]),
     ('linear', [1,196,True])'''
-    maml = Meta(args, config, dim_output, None, None).to(device)
+    maml = Meta(args, config, None).to(device)
     maml.loss_fn = maml.avg_loss
 
     ## Load model
-    load_path = os.path.expanduser("~") + '/data/models/model_tasksz' + str(args.task_num) + '_batchsz' + str(args.k_spt) + '_lr' + str(args.update_lr) + '_mr' + str(args.meta_lr) + '_lambda' + str(args.lmb) + '_exclude' + str(exclude_idx) + '_epoch0_meta1_polar0-rv.pt'
+    load_path = os.path.expanduser("~") + '/data/models/model_tasksz' + str(args.task_num) + '_batchsz' + str(args.k_spt) + '_lr' + str(args.update_lr) + '_mr' + str(args.meta_lr) + '_exclude' + str(exclude_idx) + '_epoch0_meta1_polar0.pt'
     print("Loading model: ")
     print(load_path)
     maml.load_state_dict(torch.load(load_path))
@@ -208,8 +211,8 @@ def main():
         if CLUSTER:
             name = kf_file[k_line]
             while k_line < len(kf_file) and not name.startswith(args.name + "_t" + str(args.t)):
-                k_line += 1
                 name = kf_file[k_line]
+                k_line += 1
             condition = k_line < len(kf_file) 
         else:
             condition = os.path.exists(tf_path)
@@ -235,67 +238,47 @@ def main():
                 cam_path = os.path.expanduser("~") + '/data/cam/ex' + str(exclude_idx) + '/demo' + str(demo_num) + '/'
                 if not os.path.exists(cam_path):
                     os.makedirs(cam_path)
-            #tf_list = [tf_list[-1]]
-            tf_i = 0
-            out_txt,tf_pred,obj_names = [],[],[]
-            for tf in tf_list:
-                x_spt,x_qry,n_spt,y_spt,y_qry,names_qry = db_tune.project_tf(args.name, tf)
-                #x_spt, y_spt, x_qry, y_qry, n_spt = torch.from_numpy(x_spt).float().to(device), torch.from_numpy(y_spt).float().to(device), \
-                #                                     torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device), torch.from_numpy(n_spt).float().to(device)
-                for i in range(len(names_qry[10:20])):
-                    pos = db_tune.output_scale.inverse_transform(np.array(y_spt[i]).reshape(1,-1)).squeeze(0)
-                    img = cv.imread('/u/tesca/data/center_tools/' + names_qry[10 + i] + '_center.jpg')
-                    cv.circle(img,(int(pos[1]),int(pos[0])),5,[0,255,255])
-                    cv.imwrite(cam_path + names_qry[i] + '-kf_' + str(tf_i) + '.jpg', img)
-                '''
-                loss,w,all_losses,res = maml.class_tune4(n_spt, x_spt,y_spt,x_qry,y_qry)
-                #print(all_losses[1])
-                #print(all_losses[2])
-                invs = []
-                print("KF " + str(tf_i) + " training loss: " + str(np.array(loss)))
-                #inv_spt = db_tune.inverse_project(names_qry[21],res[21].cpu().detach().numpy())
-                #print(str([tf.pose.position.x,tf.pose.position.z]) + " vs " + str(inv_spt))
-                for i in range(len(names_qry)):
-                    pred = res[i].cpu().detach().numpy()
-                    inv_tf = db_tune.inverse_project(names_qry[i], res[i].cpu().detach().numpy())
-                    invs.append(inv_tf)
-                    #print(names_qry[i] + " - " + str(pred) + " - " + str(inv_tf))
-                    obj_idx = int(np.floor(i/args.sample_size))
-                    if len(out_txt) <= obj_idx:
-                        out_txt.append([])
-                        tf_pred.append([])
-                        obj_names.append(names_qry[i].split("_00")[0])
-                    if len(out_txt[obj_idx]) <= tf_i:
-                        out_txt[obj_idx].append("")
-                        tf_pred[obj_idx].append([])
-                    out_txt[obj_idx][tf_i] += names_qry[i] + ',' + ('%s;' % ','.join(map(str,inv_tf)))
-                    tf_pred[obj_idx][tf_i].append(inv_tf)
-                    cam1 = get_CAM(w[0][i])
-                    pos1 = [(pred[0] + 1) / (db_tune.px_to_cm * db_tune.cm_to_std[0]), (pred[1] + 1) / (db_tune.px_to_cm * db_tune.cm_to_std[1])]
-                    pos = db_tune.output_scale.inverse_transform(np.array(pred).reshape(1,-1)).squeeze(0)
-
-                    #print(names_qry[i] + ": " + str(pos1) + " " + str(pos))
-
-                    if CLUSTER:
-                        img = cv.imread('/u/tesca/data/center_tools/' + names_qry[i] + '_center.jpg')
-                    else:
-                        img = cv.imread('/home/tesca/data/part-affordance-dataset/center_tools/' + names_qry[i] + '_center.jpg')
-                    if img is not None:
-                        height, width, _ = img.shape
-                        heatmap1 = cv.applyColorMap(cv.resize(cam1.transpose(),(width, height)), cv.COLORMAP_JET)
-                        result1 = heatmap1 * 0.3 + img * 0.5
-                        cv.circle(result1,(int(pos[1]),int(pos[0])),5,[0,255,255])
-                        cv.imwrite(cam_path + names_qry[i] + '-kf_' + str(tf_i) + '.jpg', result1)
-                print("Loss/Median/Mean/Variance")
-                for o in range(len(tf_pred)):
-                    med = np.median(np.array(tf_pred[o][tf_i]),axis=0)
-                    mean = np.mean(np.array(tf_pred[o][tf_i]),axis=0)
-                    var = np.var(np.array(tf_pred[o][tf_i]),axis=0)
-                    stats = obj_names[o] + ": " + str(np.array([loss])) + " " + str(np.array(med)) + " " + str(np.array(mean)) + " " + str(np.array(var))
-                    print(stats)
-                    out_txt[o][tf_i] = "KF " + str(tf_i) + "(loss/median/mean/variance)" + '\n' + stats + '\n' + out_txt[o][tf_i] # + ('%s;' % ','.join(map(str,out_txt[0][tf_i][-1])))'''
-                #print(invs[10:20])
-                tf_i += 1
+            #tf_list = [tf_list[-2]]
+            res, var, loss = [], [], []
+            for sc in range(20): # [0.2, 0.15, 0.1, 0.05, 0.04, 0.03, 0.02, 0.01]:
+                tf_i = 0
+                out_txt,tf_pred,obj_names = [],[],[]
+                db_tune.px_to_cm = (sc + 1) / 100.0
+                loss.append([])
+                var.append([])
+                for tf in tf_list:
+                    x_spt,x_qry,n_spt,y_spt,y_qry,names_qry = db_tune.project_tf(args.name, tf)
+                    x_spt, y_spt, x_qry, y_qry, n_spt = torch.from_numpy(x_spt).float().to(device), torch.from_numpy(y_spt).float().to(device), \
+                                                         torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device), torch.from_numpy(n_spt).float().to(device)
+                    loss_report, pred = maml.tune(n_spt, x_spt,y_spt,x_qry,y_qry)
+                    invs = []
+                    #print("KF " + str(tf_i) + " test loss: " + str(np.array(loss_report[1])))
+                    for i in range(len(names_qry)):
+                        p = pred[i].cpu().detach().numpy()
+                        inv = db_tune.scale.inverse_transform(p) * db_tune.px_to_cm / 100 
+                        #inv_xy = np.array(np.dot(inv, np.linalg.pinv(db_tune.grasp_pos[1]))).reshape(1,-1)
+                        obj_idx = int(np.floor(i/args.sample_size))
+                        if len(out_txt) <= obj_idx:
+                            out_txt.append([])
+                            tf_pred.append([])
+                            obj_names.append(names_qry[i].split("_00")[0])
+                        if len(out_txt[obj_idx]) <= tf_i:
+                            out_txt[obj_idx].append("")
+                            tf_pred[obj_idx].append([])
+                        tf_pred[obj_idx][tf_i].append(inv)
+                    var[sc].append(np.sum(np.stack([np.var(np.stack(p),axis=1) for p in tf_pred])) / len(tf_pred)) 
+                    loss[sc].append(loss_report[1][-1])
+                    tf_i += 1
+                #var.append(np.sum([np.var(np.stack([tf_pred[o][tf_i] for o in tf_pred]),axis=0))
+                res.append(np.stack([[np.median(np.stack(i),axis=0) for i in o] for o in tf_pred]).squeeze())
+            out = []
+            for k in range(len(tf_list)):
+                probs = [norm(loss[i][k], math.sqrt(var[i][k])).pdf(0) for i in range(len(var))]
+                best_fit = res[np.argmax(probs)]
+                out.append(best_fit[:,k,:])
+            pdb.set_trace()
+            #probs = [norm(loss[i], math.sqrt(var[i])).pdf(0) for i in range(len(var))]
+            #best_fit = res[np.argmax(probs)]
             print("Writing transforms to file")
             for tgt_i in range(len(out_txt)):
                 tgt = out_txt[tgt_i]
@@ -303,17 +286,15 @@ def main():
                 file_out = os.path.expanduser("~") + '/data/output/src_' + args.name + "-demo_" + str(demo_num) + "-tgt_" + name + "-t_" + str(args.t) + ".txt"
                 f = open(file_out, "w")
                 for kf_i in range(len(tgt)):
+                    pdb.set_trace()
+                    #stats = obj_names[o] + ": " + str(np.array([loss/len(names_qry)])) + " " + str(np.array(med)) + " " + str(np.array(mean)) + " " + str(np.array(var))
                     kf = tgt[kf_i]
                     out = ""
                     for img in kf:
                        out += img #'%s;' % ','.join(map(str,img))
                     f.write(out + '\n')
-                    #median_tf = np.median(np.array(tf_pred[tgt_i][kf_i]),axis=0)
-                    #mean_tf = np.mean(np.array(tf_pred[tgt_i][kf_i]),axis=0)
-                    #var_tf = np.var(np.array(tf_pred[tgt_i][kf_i]),axis=0)
-                    #f.write('%s' % ','.join(map(str,median_tf)) + '\n')
                 f.close()
-        demo_num += 1
+            demo_num += 1
         #tf_path = os.path.expanduser("~") + '/data/bags/' + args.name + "_" + str(demo_num) + ".bag"
         tf_path = os.path.expanduser("~") + '/test_bagfiles/' + args.name + '_t' + str(args.t) + "_" + str(demo_num) + ".bag"
 
@@ -324,11 +305,12 @@ if __name__ == '__main__':
     argparser.add_argument('--sample_size', type=int, help='epoch number', default=10)
     argparser.add_argument('--task_num', type=int, help='epoch number', default=5)
     argparser.add_argument('--t', type=int, help='epoch number', default=5)
+    argparser.add_argument('--pos_only', type=int, help='epoch number', default=0)
     argparser.add_argument('--k_spt', type=int, help='k shot for support set', default=1)
     argparser.add_argument('--k_qry', type=int, help='k shot for query set', default=3)
     argparser.add_argument('--meta_lr', type=float, help='meta-level outer learning rate', default=0.001)
-    argparser.add_argument('--lmb', type=float, help='task-level inner update learning rate', default=1.0)
     argparser.add_argument('--update_lr', type=float, help='task-level inner update learning rate', default=0.4)
+    argparser.add_argument('--feat_lr', type=float, help='task-level inner update learning rate', default=0.4)
     argparser.add_argument('--update_step', type=int, help='task-level inner update steps', default=5)
     argparser.add_argument('--update_step_test', type=int, help='update steps for finetunning', default=10)
 

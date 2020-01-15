@@ -1,3 +1,4 @@
+from copy import deepcopy
 from sklearn import preprocessing, decomposition
 from sklearn.decomposition import PCA
 import ast
@@ -72,6 +73,7 @@ class ImageProc:
         pca = PCA(n_components=2)
         pca_tf = pca.fit_transform(np.stack(grasp_clust))
         normal = math.atan2(pca.components_[0,1],pca.components_[0,0])
+        var_ratio = deepcopy(pca.explained_variance_ratio_)
         grasp_reduced = pca.inverse_transform(pca_tf)
         comp_ang = math.atan2(ax-cx,ay-cy)
         cand_ang = np.array([normal, normal-np.pi, normal+np.pi])
@@ -94,7 +96,7 @@ class ImageProc:
         ty, tx = np.array(grasp_reduced[t_idx])
 
         grasp_diff = np.array(output_scale.transform(np.array([ncy,ncx]).reshape(1,-1)) - output_scale.transform(np.array([ey,ex]).reshape(1,-1))).squeeze(0)
-        return [align_normal,pca.explained_variance_ratio_,(ey,ex),(cy,cx),(ncy,ncx),(ty,tx)]
+        return [align_normal,var_ratio,(ey,ex),(cy,cx),(ncy,ncx),(ty,tx)]
 
     def save_features(self):
 
@@ -159,21 +161,22 @@ if __name__ == '__main__':
     start = 9000
     proc = ImageProc()
     #proc.save_features()
-    with open(proc.im_dir + "tt.pkl", 'rb') as handle:
+    with open(proc.im_dir + "tt_w_var.pkl", 'rb') as handle:
         pt_dict = pickle.load(handle)
+    #pt_dict = dict()
     files = sorted([f for f in os.listdir(proc.im_dir) if f.endswith(".mat")])
-    files = files[start:min(len(files),start+1000)]
+    #files = files[start:min(len(files),start+1000)]
     c1 = 0
     for f in files:
         sys.stdout.write("\rFile %i of %i" %(c1, len(files)))
         sys.stdout.flush()
         name = f.split("_label")[0]
-        #if name not in pt_dict.keys():
-        data = proc.get_grasp_normal(name)
-        pt_dict[name] = data
+        if name not in pt_dict.keys():
+            data = proc.get_grasp_normal(name)
+            pt_dict[name] = data
         c1 += 1
         if c1 % 10 == 0:
-            with open(proc.im_dir + "tt_w_var_" + str(start) + ".pkl", 'wb') as handle:
+            with open(proc.im_dir + "tt_w_var_out.pkl", 'wb') as handle:
                 pickle.dump(pt_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    with open(proc.im_dir + "tt_w_var_" + str(start) + ".pkl", 'wb') as handle:
+    with open(proc.im_dir + "tt_w_var_out.pkl", 'wb') as handle:
         pickle.dump(pt_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)

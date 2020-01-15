@@ -96,7 +96,7 @@ def main():
     db_test.output_scale = db_train.output_scale
     if CLUSTER:
         device = torch.device('cuda:0')
-        save_path = home + '/data/models/model_tasksz' + str(args.task_num) + '_batchsz' + str(args.k_spt) + '_lr' + str(args.update_lr) + '_mr' + str(args.meta_lr) + '_lambda' + str(args.lmb) + '_exclude' + str(args.exclude) + '_epoch'
+        save_path = home + '/data/models/model_tasksz' + str(args.task_num) + '_batchsz' + str(args.k_spt) + '_lr' + str(args.update_lr) + '_mr' + str(args.meta_lr) + '_exclude' + str(args.exclude) + '_epoch'
     else:
         device = torch.device('cuda')
         save_path = os.getcwd() + '/data/models/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_exclude' + str(args.exclude) + '_epoch'
@@ -222,6 +222,7 @@ def main():
 if __name__ == '__main__':
 
     argparser = argparse.ArgumentParser()
+    argparser.add_argument('--pos_only', type=int, help='epoch number', default=0)
     argparser.add_argument('--load', type=int, help='epoch number', default=0)
     argparser.add_argument('--meta', type=int, help='epoch number', default=1)
     argparser.add_argument('--exclude', type=int, help='epoch number', default=0)
@@ -233,7 +234,7 @@ if __name__ == '__main__':
     argparser.add_argument('--task_num', type=int, help='meta batch size, namely task num', default=10)
     argparser.add_argument('--meta_lr', type=float, help='meta-level outer learning rate', default=0.0001)
     argparser.add_argument('--update_lr', type=float, help='task-level inner update learning rate', default=0.1)
-    argparser.add_argument('--lmb', type=float, help='task-level inner update learning rate', default=10.0)
+    argparser.add_argument('--feat_lr', type=float, help='task-level inner update learning rate', default=0.1)
     argparser.add_argument('--update_step', type=int, help='task-level inner update steps', default=5)
     argparser.add_argument('--update_step_test', type=int, help='update steps for finetunning', default=10)
 

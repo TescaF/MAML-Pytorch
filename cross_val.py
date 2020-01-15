@@ -77,7 +77,7 @@ def main():
     db_test.output_scale = db_train.output_scale
     if CLUSTER:
         device = torch.device('cuda:0')
-        save_path = home + '/data/models/model_batchsz' + str(args.k_spt) + '_lr' + str(args.update_lr) + '_mr' + str(args.meta_lr) + '_lambda' + str(args.lmb) + '_exclude' + str(args.exclude) + '_epoch'
+        save_path = home + '/data/models/model_batchsz' + str(args.k_spt) + '_lr' + str(args.update_lr) + '_mr' + str(args.meta_lr) + '_exclude' + str(args.exclude) + '_epoch'
     else:
         device = torch.device('cuda')
         save_path = os.getcwd() + '/data/models/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_exclude' + str(args.exclude) + '_epoch'
@@ -92,7 +92,7 @@ def main():
             ('linear', [196,196,True]),
             ('bn', [196]), 
             ('leakyrelu', [0.01,False]), 
-            ('linear', [2,196,True])
+            ('linear', [4,196,True])
         ]
         maml = Meta(args, config, None).to(device)
         maml.loss_fn = maml.avg_loss
@@ -145,7 +145,7 @@ def main():
     results_txt,test_losses,ft_training,pt_training = [],[],[],[]
     k_spt = args.k_spt * sample_size
     max_grad = 0
-    for epoch in range(1): #args.epoch):
+    for epoch in range(args.epoch):
         batch_x, n_spt, batch_y,_,_ = db_train.next()
         x_spt = batch_x[:,:k_spt,:]
         y_spt = batch_y[:,:k_spt,:]
@@ -180,7 +180,7 @@ def main():
                 t = 0
                 for x_spt_one, y_spt_one, x_qry_one, y_qry_one, n_spt_one, pos_one, neg_ones in zip(x_spt,y_spt,x_qry,y_qry,n_spt,pos_keys,neg_keys):
                     if args.meta == 1: 
-                        losses, cam, loss_report, pred = maml.tune(n_spt_one, x_spt_one,y_spt_one,x_qry_one,y_qry_one) 
+                        loss_report, pred = maml.tune(n_spt_one, x_spt_one,y_spt_one,x_qry_one,y_qry_one) 
                         test_losses.append(loss_report[0]) 
                         pt_training.append(loss_report[1]) 
                         ft_training.append(loss_report[2])
@@ -195,9 +195,9 @@ def main():
             #results_txt.append("%0.6f" % (np.array(test_losses).mean(axis=0)))
             results_txt.append("%0.6f" % (np.array(test_losses).mean(axis=0)[-1]))
             test_losses,ft_training,pt_training = [],[],[]
-    results_file = home + "/data/cross_val/meta" + str(args.meta) + "_ex" + str(args.exclude) + "_rv" + ".txt"
+    results_file = home + "/data/cross_val/pos" + str(args.pos_only) + "_ex" + str(args.exclude) + "_rv" + ".txt"
     out_file = open(results_file, "a+")
-    out_file.write(("%0.3f" % args.update_lr) + ", " + ("%0.5f" % args.meta_lr) + ", " + str(results_txt) + '\n')
+    out_file.write(("%0.3f" % args.update_lr) + ", " + ("%0.5f" % args.meta_lr) + ", " + ("%0.5f" % args.feat_lr) + ": " + str(results_txt) + '\n')
     out_file.close()
     
 
@@ -206,6 +206,7 @@ if __name__ == '__main__':
 
     argparser = argparse.ArgumentParser()
     argparser.add_argument('--meta', type=int, help='epoch number', default=1)
+    argparser.add_argument('--pos_only', type=int, help='epoch number', default=1)
     argparser.add_argument('--exclude', type=int, help='epoch number', default=0)
     argparser.add_argument('--polar', type=int, help='epoch number', default=1)
     argparser.add_argument('--sample_size', type=int, help='epoch number', default=10)
@@ -215,7 +216,7 @@ if __name__ == '__main__':
     argparser.add_argument('--task_num', type=int, help='meta batch size, namely task num', default=10)
     argparser.add_argument('--meta_lr', type=float, help='meta-level outer learning rate', default=0.0001)
     argparser.add_argument('--update_lr', type=float, help='task-level inner update learning rate', default=0.01)
-    argparser.add_argument('--lmb', type=float, help='task-level inner update learning rate', default=3.0)
+    argparser.add_argument('--feat_lr', type=float, help='task-level inner update learning rate', default=0.01)
     argparser.add_argument('--update_step', type=int, help='task-level inner update steps', default=5)
     argparser.add_argument('--update_step_test', type=int, help='update steps for finetunning', default=10)
 
