@@ -1,3 +1,4 @@
+import csv
 from scipy.stats import norm
 import gzip
 import math
@@ -238,16 +239,15 @@ def main():
                 cam_path = os.path.expanduser("~") + '/data/cam/ex' + str(exclude_idx) + '/demo' + str(demo_num) + '/'
                 if not os.path.exists(cam_path):
                     os.makedirs(cam_path)
-            #tf_list = [tf_list[-2]]
+            tf_list = tf_list[1:]
             res, var, loss = [], [], []
             for sc in range(20): # [0.2, 0.15, 0.1, 0.05, 0.04, 0.03, 0.02, 0.01]:
                 tf_i = 0
                 out_txt,tf_pred,obj_names = [],[],[]
-                db_tune.px_to_cm = (sc + 1) / 100.0
                 loss.append([])
                 var.append([])
                 for tf in tf_list:
-                    x_spt,x_qry,n_spt,y_spt,y_qry,names_qry = db_tune.project_tf(args.name, tf)
+                    x_spt,x_qry,n_spt,y_spt,y_qry,names_qry,scale = db_tune.project_tf(args.name, tf, scale=sc)
                     x_spt, y_spt, x_qry, y_qry, n_spt = torch.from_numpy(x_spt).float().to(device), torch.from_numpy(y_spt).float().to(device), \
                                                          torch.from_numpy(x_qry).float().to(device), torch.from_numpy(y_qry).float().to(device), torch.from_numpy(n_spt).float().to(device)
                     loss_report, pred = maml.tune(n_spt, x_spt,y_spt,x_qry,y_qry)
@@ -255,7 +255,7 @@ def main():
                     #print("KF " + str(tf_i) + " test loss: " + str(np.array(loss_report[1])))
                     for i in range(len(names_qry)):
                         p = pred[i].cpu().detach().numpy()
-                        inv = db_tune.scale.inverse_transform(p) * db_tune.px_to_cm / 100 
+                        inv = db_tune.scale.inverse_transform(p) / scale 
                         #inv_xy = np.array(np.dot(inv, np.linalg.pinv(db_tune.grasp_pos[1]))).reshape(1,-1)
                         obj_idx = int(np.floor(i/args.sample_size))
                         if len(out_txt) <= obj_idx:
@@ -266,33 +266,74 @@ def main():
                             out_txt[obj_idx].append("")
                             tf_pred[obj_idx].append([])
                         tf_pred[obj_idx][tf_i].append(inv)
-                    var[sc].append(np.sum(np.stack([np.var(np.stack(p),axis=1) for p in tf_pred])) / len(tf_pred)) 
+                    var[sc].append(np.sum(np.stack([np.var(np.stack(p),axis=1) for p in tf_pred]))) # / len(tf_pred)) 
                     loss[sc].append(loss_report[1][-1])
+                    if np.isnan(var[-1][-1]) or np.isnan(loss[-1][-1]):
+                        pdb.set_trace()
                     tf_i += 1
                 #var.append(np.sum([np.var(np.stack([tf_pred[o][tf_i] for o in tf_pred]),axis=0))
-                res.append(np.stack([[np.median(np.stack(i),axis=0) for i in o] for o in tf_pred]).squeeze())
+                res.append(np.stack([[np.dot(np.median(np.stack(i),axis=0),np.linalg.pinv(db_tune.grasp_pos[1])) for i in o] for o in tf_pred]).squeeze())
+            ref_obj = obj_names.index(args.name)
             out = []
-            for k in range(len(tf_list)):
-                probs = [norm(loss[i][k], math.sqrt(var[i][k])).pdf(0) for i in range(len(var))]
+            res = np.stack(res)
+            probs = np.stack([[norm(loss[i][k], math.sqrt(var[i][k])).pdf(0) for i in range(len(var))] for k in range(len(tf_list))])
+            best_fit_indiv = np.stack([res[np.argmax(probs,axis=1)[k],:,k] for k in range(len(tf_list))])
+            best_fit_sum = np.stack([res[np.argmax(np.sum(probs,axis=0)),:,k] for k in range(len(tf_list))])
+            best_fit_kf = np.argmax(np.max(probs,axis=1))
+            best_fit_tf = res[np.argmax(probs[best_fit_kf]),:,best_fit_kf] - res[np.argmax(probs[best_fit_kf]),ref_obj,best_fit_kf]
+            best_fit_prop = np.tile(best_fit_sum[:,ref_obj,:],(len(obj_names),1,1)) + np.repeat(best_fit_tf,len(tf_list),axis=0).reshape(len(obj_names), len(tf_list), -1)
+            best_fit_prop = np.transpose(best_fit_prop,(1,0,2))
+
+
+            inter_tf,ref = [],[]
+            sse = np.zeros(len(res))
+            prev = tf_list[0][0]
+            for k in range(len(tf_list) - 1):
+                inter_tf.append(res[:,:,k+1] - res[:,:,k])
+                next_kf = tf_list[k+1][0]
+                ref.append(next_kf - prev)
+                prev = next_kf
+                pdb.set_trace()
+                sse += ((inter_tf[-1] - np.repeat(ref[-1].reshape(1,-1),len(obj_names),axis=0))**2.0).sum(axis=1).sum(axis=1)
+            pdb.set_trace()
+
+            '''for k in range(len(tf_list)):
+                probs.append([norm(loss[i][k], math.sqrt(var[i][k])).pdf(0) for i in range(len(var))])
                 best_fit = res[np.argmax(probs)]
                 out.append(best_fit[:,k,:])
             pdb.set_trace()
-            #probs = [norm(loss[i], math.sqrt(var[i])).pdf(0) for i in range(len(var))]
-            #best_fit = res[np.argmax(probs)]
+            probs = [norm(loss[i], math.sqrt(var[i])).pdf(0) for i in range(len(var))]
+            best_fit = res[np.argmax(probs)]'''
             print("Writing transforms to file")
-            for tgt_i in range(len(out_txt)):
-                tgt = out_txt[tgt_i]
-                name = obj_names[tgt_i]
-                file_out = os.path.expanduser("~") + '/data/output/src_' + args.name + "-demo_" + str(demo_num) + "-tgt_" + name + "-t_" + str(args.t) + ".txt"
-                f = open(file_out, "w")
-                for kf_i in range(len(tgt)):
-                    pdb.set_trace()
-                    #stats = obj_names[o] + ": " + str(np.array([loss/len(names_qry)])) + " " + str(np.array(med)) + " " + str(np.array(mean)) + " " + str(np.array(var))
-                    kf = tgt[kf_i]
-                    out = ""
-                    for img in kf:
-                       out += img #'%s;' % ','.join(map(str,img))
-                    f.write(out + '\n')
+            file_out = os.path.expanduser("~") + '/data/output/src_' + args.name + "-demo_" + str(demo_num) + "-tgt_" + name + "-t_" + str(args.t) + "-indiv.csv"
+            with open(file_out, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(["Object"] + ["KF " + str(i) for i in range(len(tf_list))]) 
+                for o in range(len(obj_names)):
+                    row = [obj_names[o]]
+                    for k in range(len(tf_list)):
+                        row.append(' '.join([str(v) for v in best_fit_indiv[k,o]]))
+                    writer.writerow(row)
+                f.close()
+            file_out = os.path.expanduser("~") + '/data/output/src_' + args.name + "-demo_" + str(demo_num) + "-tgt_" + name + "-t_" + str(args.t) + "-sum.csv"
+            with open(file_out, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(["Object"] + ["KF " + str(i) for i in range(len(tf_list))]) 
+                for o in range(len(obj_names)):
+                    row = [obj_names[o]]
+                    for k in range(len(tf_list)):
+                        row.append(' '.join([str(v) for v in best_fit_sum[k,o]]))
+                    writer.writerow(row)
+                f.close()
+            file_out = os.path.expanduser("~") + '/data/output/src_' + args.name + "-demo_" + str(demo_num) + "-tgt_" + name + "-t_" + str(args.t) + "-prop.csv"
+            with open(file_out, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(["Object"] + ["KF " + str(i) for i in range(len(tf_list))]) 
+                for o in range(len(obj_names)):
+                    row = [obj_names[o]]
+                    for k in range(len(tf_list)):
+                        row.append(' '.join([str(v) for v in best_fit_prop[k,o]]))
+                    writer.writerow(row)
                 f.close()
             demo_num += 1
         #tf_path = os.path.expanduser("~") + '/data/bags/' + args.name + "_" + str(demo_num) + ".bag"

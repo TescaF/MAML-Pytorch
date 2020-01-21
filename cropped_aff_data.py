@@ -62,7 +62,7 @@ class Affordances:
 
         # Load image affordance locations
         self.valid_keys, training_keys, all_vals = [],[],[]
-        with open(os.path.expanduser("~") + "/data/cropped/tt_w_var_out.pkl", 'rb') as handle:
+        with open(os.path.expanduser("~") + "/data/cropped/tt_pca_out.pkl", 'rb') as handle:
             self.aff_pts = pickle.load(handle)      #dict(category) = [img1, img2, ...]
         with open(os.path.expanduser("~") + "/data/cropped_grasp_positions.pkl", 'rb') as handle:
             self.grasps = pickle.load(handle)      #dict(category) = [img1, img2, ...]
@@ -101,6 +101,7 @@ class Affordances:
         self.tf_scale = preprocessing.MinMaxScaler(feature_range=(-1,1))
         self.tf_scale.fit(np.matrix([[0,-110],[220,110]]))
         all_vals = self.expand_outputs()
+        self.val_range = [np.min(all_vals,axis=0), np.max(all_vals,axis=0)]
         self.scale = preprocessing.StandardScaler()
         self.scale.fit(all_vals)
         print("Scaler: " + str(self.scale.scale_) + ", " + str(self.scale.mean_))
@@ -152,14 +153,17 @@ class Affordances:
         for k in keys:
             for c in self.all_categories:
                 if k.startswith(c):
-                    align_normal, var_ratio, c1, c2, c3, c4 = self.aff_pts[k]
-                    x_len = np.sqrt((c4[0]-c1[0])**2.0 + (c4[1]-c1[1])**2.0) 
+                    var_ratio, c1, c2 = self.aff_pts[k]
+                    #align_normal, var_ratio, c1, c2, c3, c4 = self.aff_pts[k]
+                    x_len = np.sqrt((c2[0]-c1[0])**2.0 + (c2[1]-c1[1])**2.0) 
                     expanded.append(np.array([x_len,0]))
                     new_r = math.sqrt(2*(450.0**2.0))/4.0
                     for tf_a in [np.pi, np.pi/2.0, 0.0, -np.pi/2.0]:
+                        ratio = var_ratio[1] / var_ratio[0]
                         x = x_len + (new_r * math.sin(tf_a))
-                        y = (x_len * (var_ratio[1]/var_ratio[0])) + (new_r * math.cos(tf_a))
+                        y = (x_len * ratio * np.sign(math.cos(tf_a))) + (new_r * ratio * math.cos(tf_a))
                         expanded.append(np.array([x,y]))
+                        expanded.append(np.array([x,-y]))
         return np.stack(expanded)
 
     def next(self):
@@ -176,48 +180,52 @@ class Affordances:
             tf_r = self.rand.uniform(0,0.5)
             # Number of objects per class
             for c in range(self.num_samples_per_class):
-                samples = []
+                x_len, ratios = [], []
                 # Number of images per object
+                pos = pos_keys[t][c*self.sample_size:]
+                neg = neg_keys[t][c*self.sample_size:]
                 for n in range(self.sample_size):
-                    negative_list.append(self.inputs[neg_keys[t][(c*n)+n]].reshape((1024,14,14)).transpose())
-                    input_list.append(self.inputs[pos_keys[t][(c*n)+n]].reshape((1024,14,14)).transpose())
+                    negative_list.append(self.inputs[pos[n]].reshape((1024,14,14)).transpose())
+                    input_list.append(self.inputs[pos[n]].reshape((1024,14,14)).transpose())
                     #center = self.grasps[pos_keys[t][n]]
-                    if pos_keys[t][(c*n)+n].split("_label")[0] in self.aff_pts.keys() and not self.aff_pts[pos_keys[t][(c*n)+n].split("_label")[0]] is None:
+                    if pos[n].split("_label")[0] in self.aff_pts.keys() and not self.aff_pts[pos[n].split("_label")[0]] is None:
                         # Centers: grasp end, grasp absolute center, grasp center, tooltip
-                        align_normal, var_ratio, c1, c2, c3, c4 = self.aff_pts[pos_keys[t][(c*n)+n].split("_label")[0]]
+                        var_ratio, c1, c2 = self.aff_pts[pos[n].split("_label")[0]]
+                        #align_normal, var_ratio, c1, c2, c3, c4 = self.aff_pts[pos[n].split("_label")[0]]
+                        #print(pos[n].split("_label")[0] + ": " + str(c2) + str(c1) + "  " + str(np.sqrt((c2[0]-c1[0])**2.0 + (c2[1]-c1[1])**2.0)))
                     else:
-                        align_normal, var_ratio, grasp_diff, center = self.get_grasp_normal(pos_keys[t][(c*n)+n].split("_label")[0], grasp_aff=-1)
+                        pdb.set_trace()
+                        align_normal, var_ratio, grasp_diff, center = self.get_grasp_normal(pos[n].split("_label")[0], grasp_aff=-1)
                         c1, c2, c3, c4 = center
 
+                    x_len.append(np.sqrt((c2[0]-c1[0])**2.0 + (c2[1]-c1[1])**2.0))
+                    ratios.append(var_ratio)
                     #pt = np.array(c4) - np.array(c3)
                     #r1 = np.sqrt(pt[0]**2 + pt[1]**2)
-                    new_r = max_r * tf_r
-                    x_len = np.sqrt((c4[0]-c1[0])**2.0 + (c4[1]-c1[1])**2.0) 
-                    x = x_len + (new_r * math.sin(tf_a))
-                    y = (x_len * (var_ratio[1]/var_ratio[0])) + (new_r * math.cos(tf_a))
-                    a = tf_a + align_normal
+                new_r = max_r * tf_r
+                med_len = np.median(np.stack(x_len))
+                x = med_len + (new_r * math.sin(tf_a))
+                med_r = np.median(np.stack(ratios)[:,1] / np.stack(ratios)[:,0])
+                y = (med_len * med_r * np.sign(math.cos(tf_a))) + (new_r * med_r * math.cos(tf_a))
+                #new_r = max_r * tf_r
+                #x_len = np.sqrt((c2[0]-c1[0])**2.0 + (c2[1]-c1[1])**2.0) 
+                #pts.append(x_len)
+                #x = x_len + (new_r * math.sin(tf_a))
+                #y = ((x_len * var_ratio[1] / var_ratio[0]) + new_r) * math.cos(tf_a)
 
-                    tf_out_x = c4[0] + (new_r * math.cos(a))
-                    tf_out_y = c4[1] + (new_r * math.sin(a))
 
-                    samples.append(np.array([x,y]))
-                '''name = pos_keys[t][n].split("_label")[0]
-                img = cv.imread('/u/tesca/data/cropped/' + name + '_rgb.jpg')
-                cv.circle(img,(int(tf_out_y),int(tf_out_x)),5,[0,0,255])
-                cv.imwrite('/u/tesca/data/train_imgs/t' + str(t) + "_im-" + name +'.jpg', img)'''
-
-                med_out = np.median(np.stack(samples),axis=0)
-                out = self.scale.transform(med_out.reshape(1,-1)).squeeze()
-                #out = self.output_scale.transform(np.array([tf_out_x,tf_out_y]).reshape(1,-1)).squeeze()
-                for _ in range(self.sample_size):
+                out = self.scale.transform(np.array([x,y]).reshape(1,-1)).squeeze()
+                for i in range(self.sample_size):
                     output_list.append(out)
+                #print(pos[0] + ": " + str(out) + " " + str([x,y]))
+
             init_inputs[t] = np.stack(input_list)
             neg_inputs[t] = np.stack(negative_list)
             outputs[t] = np.stack(output_list)
             #outputs[t] = np.repeat(np.expand_dims(np.mean(output_list,axis=0),axis=0), output_list.shape[0], axis=0)
         return init_inputs, neg_inputs, outputs, pos_keys, neg_keys
 
-    def project_tf(self, name_spt, tf):
+    def project_tf(self, name_spt, tf, scale=-1):
         spt_inputs = np.zeros([self.num_samples_per_class * self.sample_size, 14,14,1024])
         qry_inputs = np.zeros([self.num_samples_per_class * self.sample_size, 14,14,1024])
         neg_inputs = np.zeros([self.num_samples_per_class * self.sample_size, 14,14,1024])
@@ -252,12 +260,20 @@ class Affordances:
                 fts = self.inputs[im]
                 if im.startswith(name_spt):
                     pose = np.matrix([tf[0]])
-                    tf_xy = np.array(np.dot(pose,self.grasp_pos[1])).reshape(1,-1)
-                    out = self.scale.transform((100*tf_xy) / self.px_to_cm) #self.apply_tf_wrt_grasp(im, tf)
+                    tf_xy = np.array(np.dot(pose,self.grasp_pos[1])) #.reshape(1,-1)
+                    sc_div = np.stack(self.val_range) / tf_xy
+                    sc_min = np.max(np.min(sc_div,axis=0))
+                    sc_max = np.min(np.max(sc_div,axis=0))
+                    sc_ivl = (sc_max - sc_min) / 19.0
+                    if scale == -1:
+                        out = self.scale.transform((100*tf_xy) / self.px_to_cm) 
+                    else:
+                        out = self.scale.transform((sc_min + (sc_ivl * scale)) * tf_xy.reshape(1,-1)) 
                     #inv = self.scale.inverse_transform(out) * self.px_to_cm / 100 #self.apply_tf_wrt_grasp(im, tf)
                     #inv_xy = np.array(np.dot(inv, np.linalg.pinv(self.grasp_pos[1]))).reshape(1,-1)
 
                     spt_output_list.append(out)
+                    #spt_output_list.append(out)
                     spt_input_list.append(fts.reshape((1024,14,14)).transpose())
                     qry_output_list.append(np.matrix([0,0]))
                     qry_input_list.append(fts.reshape((1024,14,14)).transpose())
@@ -270,7 +286,7 @@ class Affordances:
         neg_inputs = np.stack(negative_list)
         spt_outputs = np.stack(spt_output_list)
         qry_outputs = np.stack(qry_output_list)
-        return spt_inputs, qry_inputs, neg_inputs, spt_outputs, qry_outputs, qry_keys
+        return spt_inputs, qry_inputs, neg_inputs, spt_outputs, qry_outputs, qry_keys,(sc_min + (sc_ivl * scale))
 
         # Get support images
         # For each support image, get centroid and direction of grasp
@@ -330,75 +346,6 @@ class Affordances:
         grasp_diff = np.array(self.scale.transform(np.array([ncy,ncx]).reshape(1,-1)) - self.scale.transform(np.array([ey,ex]).reshape(1,-1))).squeeze(0)
         # Centers: grasp end, grasp absolute center, grasp center, tooltip
         return align_normal, pca.explained_variance_ratio_, grasp_diff, [(ey,ex),(cy,cx),(ncy,ncx),(ty,tx)]
-
-    def apply_tf_wrt_grasp(self, img_name, tf):
-        #align_normal, grasp_diff, center = self.get_grasp_normal(img_name)
-        align_normal, var_ratio, c1, c2, c3, c4 = self.aff_pts[img_name]
-
-        # Project TF x and y
-        '''tf_x = tf.pose.position.x 
-        tf_y = -tf.pose.position.z
-        tf_z = tf.pose.position.y'''
-        if isinstance(tf, list):
-            pose = np.matrix([tf[0]])
-        else:
-            pose = np.matrix([[tf.pose.position.x,tf.pose.position.y,tf.pose.position.z]])
-        tf_x, tf_y = np.array(np.dot(pose,self.grasp_pos[1])).squeeze(0).tolist()
-        tf_r = math.sqrt(tf_x**2.0 + tf_y**2.0)
-        tf_ang = math.atan2(tf_y, tf_x)
-        a = tf_ang + align_normal
-        ee_std = [math.cos(a) * tf_r * 100.0 * self.cm_to_std[0], math.sin(a) * tf_r * 100.0 * self.cm_to_std[1]]
-        if self.grasp_pos[0] == "end":
-            ee_std -= grasp_diff
-
-        # Testing
-        '''for pt in aff_clust:
-            img[pt[0,0],pt[0,1]] = (0,0,0)
-        for pt in grasp_clust:
-            img[pt[0,0],pt[0,1]] = (255,255,255)'''
-        ee_inv = self.inverse_project(img_name, ee_std)
-        #print(img_name + ": " + str([tf_x,tf_y]) + " -> " + str(ee_inv))
-        '''img = cv.imread('/home/tesca/data/part-affordance-dataset/center_tools/' + img_name + '_center.jpg')
-        img2 = cv.imread('/home/tesca/data/part-affordance-dataset/tools/' + img_name.split("_00")[0] + '/' + img_name + '_rgb.jpg')
-        ee = self.output_scale.inverse_transform(np.array(ee_std-centering).reshape(1,-1)).squeeze(0)
-        ee1 = self.output_scale.inverse_transform(np.array(ee_std+grasp_diff).reshape(1,-1)).squeeze(0)
-        cv.circle(img,(int(ee[1]),int(ee[0])),5,[255,255,0])
-        #cv.circle(img,(int(ee1[1]),int(ee1[0])),5,[255,0,0])
-        cv.imshow("img",img)
-        cv.waitKey(0)'''
-        '''ee = self.output_scale.inverse_transform(np.array(ee_std+centering).reshape(1,-1)).squeeze(0)
-        ee1 = self.output_scale.inverse_transform(np.array(ee_std+grasp_diff+centering).reshape(1,-1)).squeeze(0)
-        cv.circle(img2,(int(ee[1]),int(ee[0])),5,[255,255,0])
-        cv.circle(img2,(int(ee1[1]),int(ee1[0])),5,[255,0,0])
-        cv.imshow("img",img2)
-        cv.waitKey(0)'''
-        return ee_std
-
-    def inverse_project(self, img_name, pt):
-        #align_normal, grasp_diff, center = self.get_grasp_normal(img_name)
-
-        #if self.grasp_pos[0] == "end":
-        #    pt1 = pt + grasp_diff
-        #centering = self.output_scale.transform(np.array(center).reshape(1,-1)).squeeze()
-        #pt += centering
-
-        inv_pt = np.divide(self.scale.inverse_transform(pt), self.px_to_cm)/100.0
-        #ee_px = self.output_scale.inverse_transform(np.array(pt).reshape(1,-1)).squeeze(0)
-        #inv_pt = (np.array(ee_px)-np.array(self.center[:2])) * self.px_to_cm / 100.0
-        pt_r = math.sqrt(inv_pt[0]**2.0 + inv_pt[1]**2.0)
-        pt_ang = math.atan2(inv_pt[1], inv_pt[0])
-        a = pt_ang - align_normal  #- pt_ang
-        ee = [math.cos(a) * pt_r, math.sin(a) * pt_r]
-
-        # Testing
-        #img2 = cv.imread('/home/tesca/data/part-affordance-dataset/tools/' + img_name.split("_00")[0] + '/' + img_name + '_rgb.jpg')
-        '''img = cv.imread('/home/tesca/data/part-affordance-dataset/center_tools/' + img_name + '_center.jpg')
-        ee = self.output_scale.inverse_transform(np.array(pt).reshape(1,-1)).squeeze(0)
-        cv.circle(img,(int(ee[1]),int(ee[0])),5,[255,255,0])
-        cv.imshow("img",img)
-        cv.waitKey(0)'''
-
-        return ee
 
 if __name__ == '__main__':
     IN = Affordances(5,3,3,2)

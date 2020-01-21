@@ -60,7 +60,8 @@ class Meta(nn.Module):
 
     def update(self, net, update_step, data_in, y_spt, y_qry, class_tgt, spt_idx, qry_idx):
         sig = nn.Sigmoid()
-        hook = len(list(net.config))-1
+        #sw = deepcopy(net.parameters())
+        #opt = optim.Adam(sw, lr=self.update_lr)
         test_losses = [0 for _ in range(update_step + 1)]
         ft_train_losses = [0 for _ in range(update_step)]
         pt_train_losses = [0 for _ in range(update_step)]
@@ -79,71 +80,11 @@ class Meta(nn.Module):
                 pt_train_losses[k] += loss_r.item()
                 grad = list(torch.autograd.grad(loss_r, (net.parameters() if k==0 else s_weights))) 
                 s_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, (net.parameters() if k==0 else s_weights))))
-            else:
-                ''' g7:
-                logits_a = net(all_input, vars=(None if k==0 else s_weights))[:,:2]
-                loss_a = F.cross_entropy(logits_a, class_tgt) 
-                ft_train_losses[k] += loss_a.item()
-                grad = list(torch.autograd.grad(loss_a, (net.parameters() if k==0 else s_weights))) 
-                s_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, (net.parameters() if k==0 else s_weights))))
 
-                logits_r = net(all_input, vars=s_weights)[:spt_idx,2:]
+                '''opt.zero_grad()
                 loss_r = F.mse_loss(logits_r, y_spt)
-                grad = list(torch.autograd.grad(loss_r, s_weights)) 
-                s_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, s_weights)))
-
-                pt_train_losses[k] += loss_r.item()
-                with torch.no_grad():
-                    logits_q = net(all_input, vars=s_weights)[spt_idx:qry_idx,2:]
-                    loss_q = F.mse_loss(logits_q, y_qry)
-                    test_losses[k+1] += loss_q.item()
-                continue'''
-
-                logits_a = net(all_input, vars=(None if k==0 else s_weights))[:,:2]
-                loss_a = F.cross_entropy(logits_a, class_tgt) 
-                ft_train_losses[k] += loss_a.item()
-                grad = list(torch.autograd.grad(loss_a, (net.parameters() if k==0 else s_weights))) 
-                # g9 is weighting update lr for features x 10
-                s_weights = list(map(lambda p: p[1] - self.feat_lr * p[0], zip(grad, (net.parameters() if k==0 else s_weights))))
-
-                with torch.no_grad():
-                    part_input = net(all_input, vars=s_weights,hook=len(net.config)-1).detach()
-                logits_r = F.linear(part_input, s_weights[-2], s_weights[-1])[:spt_idx,2:]
-                loss_r = F.mse_loss(logits_r, y_spt)
-                grad = list(torch.autograd.grad(loss_r, s_weights,allow_unused=True)) 
-                s_weights[-1] = s_weights[-1] - self.update_lr * grad[-1]
-                s_weights[-2] = s_weights[-2] - self.update_lr * grad[-2]
-
-                pt_train_losses[k] += loss_r.item()
-                with torch.no_grad():
-                    logits_q = net(all_input, vars=s_weights)[spt_idx:qry_idx,2:]
-                    loss_q = F.mse_loss(logits_q, y_qry)
-                    test_losses[k+1] += loss_q.item()
-                continue
-
-            '''if mode == "g9":
-                logits_a = net(all_input, vars=(None if k==0 else s_weights))[:,:2]
-                loss_a = F.cross_entropy(logits_a, class_tgt) 
-                ft_train_losses[k] += loss_a.item()
-                grad = list(torch.autograd.grad(loss_a, (net.parameters() if k==0 else s_weights))) 
-                s_weights = list(map(lambda p: p[1] - 10.0 * self.update_lr * p[0], zip(grad, (net.parameters() if k==0 else s_weights))))
-
-                with torch.no_grad():
-                    part_input = net(all_input, vars=s_weights,hook=len(net.config)-1).detach()
-                w_input = part_input[:spt_idx] * s_weights[-2][1,:].detach()
-                logits_r = F.linear(w_input, s_weights[-2], s_weights[-1])[:spt_idx,2:]
-                loss_r = F.mse_loss(logits_r, y_spt)
-                grad = list(torch.autograd.grad(loss_r, s_weights,allow_unused=True)) 
-                s_weights[-1] = s_weights[-1] - self.update_lr * grad[-1]
-                s_weights[-2] = s_weights[-2] - self.update_lr * grad[-2]
-
-                pt_train_losses[k] += loss_r.item()
-                with torch.no_grad():
-                    logits_q = net(all_input, vars=s_weights)[spt_idx:qry_idx,2:]
-                    loss_q = F.mse_loss(logits_q, y_qry)
-                    test_losses[k+1] += loss_q.item()
-                continue'''
-
+                loss_r.backward()
+                opt.step()'''
 
             with torch.no_grad():
                 logits_q = net(all_input, vars=s_weights)[spt_idx:qry_idx,2:]
@@ -187,7 +128,6 @@ class Meta(nn.Module):
     def tune(self, n_spt, x_spt, y_spt, x_qry, y_qry):
         net = deepcopy(self.net)
         opt = optim.Adam(net.parameters(), lr=self.meta_lr)
-        hook = len(list(net.config))-1
         test_losses = [0 for _ in range(self.update_step_test + 1)]
         ft_train_loss = [0 for _ in range(self.update_step_test)]
         pt_train_loss = [0 for _ in range(self.update_step_test)]

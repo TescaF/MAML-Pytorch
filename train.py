@@ -172,7 +172,7 @@ def main():
             test_losses,ft_training,pt_training = [],[],[]
 
         if epoch % 500 == 0:  # evaluation
-            torch.save(maml.state_dict(), save_path + str(epoch%2000) + "_meta" + str(args.meta) + "_polar" + str(args.polar) + ".pt")
+            torch.save(maml.state_dict(), save_path + str(epoch%2000) + "_meta" + str(args.meta) + "_polar" + str(args.polar) + "-v2.pt")
             test_losses,ft_training,pt_training = [],[],[]
             batch_x,n_spt,batch_y,pos_keys,neg_keys = db_test.next()
             x_spt = batch_x[:,:k_spt,:]
@@ -185,14 +185,14 @@ def main():
             t = 0
             for x_spt_one, y_spt_one, x_qry_one, y_qry_one, n_spt_one, pos_one, neg_one in zip(x_spt,y_spt,x_qry,y_qry,n_spt,pos_keys,neg_keys):
                 if args.meta == 1:
-                    losses, cam, loss_report, pred = maml.tune(n_spt_one, x_spt_one,y_spt_one,x_qry_one,y_qry_one)
+                    loss_report, pred = maml.tune(n_spt_one, x_spt_one,y_spt_one,x_qry_one,y_qry_one)
                     test_losses.append(loss_report[0])
                     pt_training.append(loss_report[1])
                     ft_training.append(loss_report[2])
                 else:
                     train_loss,test_loss,w,_ = maml.finetuning(x_spt_one, y_spt_one,x_qry_one,y_qry_one)
                     test_losses.append(test_loss)
-                if epoch % 2000 == 0: 
+                '''if epoch % 2000 == 0: 
                     for i in range(x_spt_one.shape[0]):
                         name = pos_one[i].split("_label")[0]
                         cam_im = get_CAM(cam[0][i])
@@ -209,7 +209,7 @@ def main():
                             g = "g4"
                             cv.circle(result1,(int(pos[1]),int(pos[0])),5,[255,255,0])
                             cv.imwrite('/u/tesca/data/' + g + '_imgs/min_t' + str(t) + '_ep' + str(epoch) + '_ex' + str(args.exclude) + "_" + name + '-cam.jpg', result1)
-                            cv.imwrite('/u/tesca/data/' + g + '_imgs/min_t' + str(t) + '_ep' + str(epoch) + '_ex' + str(args.exclude) + "_" + name + '-out.jpg', result3)
+                            cv.imwrite('/u/tesca/data/' + g + '_imgs/min_t' + str(t) + '_ep' + str(epoch) + '_ex' + str(args.exclude) + "_" + name + '-out.jpg', result3)'''
                 t+=1
 
             print('Test Loss:', np.array(test_losses).mean(axis=0))

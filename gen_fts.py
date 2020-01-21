@@ -57,31 +57,41 @@ class ImageProc:
         label = scipy.io.loadmat(self.im_dir + img_name + "_label.mat")
         img_affs = cv.warpPerspective(label['gt_label'], np.dot(self.offset,self.tf), (450,450))
 
-        aff_pts = np.matrix([(i,j) for i in range(img_affs.shape[0]) for j in range(img_affs.shape[1]) if img_affs[i,j] > 1 and img_affs[i,j] < 7])
-        if aff_pts.shape[1] == 0:
-            return None
-        clusters = sklearn.cluster.DBSCAN(eps=3, min_samples=10).fit_predict(aff_pts)
-        aff_clust = [aff_pts[i] for i in range(len(aff_pts)) if clusters[i] > -1]
-        ay, ax = np.median(aff_clust,axis=0).squeeze(0)
+        grasp_pts = np.array([(i,j) for i in range(img_affs.shape[0]) for j in range(img_affs.shape[1]) if img_affs[i,j] == 1 or img_affs[i,j] == 7])
+        grasp_med = np.median(grasp_pts,axis=0)
 
-        grasp_pts = np.matrix([(i,j) for i in range(img_affs.shape[0]) for j in range(img_affs.shape[1]) if img_affs[i,j] >= 1])
-        clusters = sklearn.cluster.DBSCAN(eps=3, min_samples=20).fit_predict(grasp_pts)
-        grasp_clust = [grasp_pts[i] for i in range(len(grasp_pts)) if clusters[i] > -1]
-        cy, cx = np.median(grasp_clust,axis=0).squeeze(0)
-
-        # Get edge normal
-        pca = PCA(n_components=2)
-        pca_tf = pca.fit_transform(np.stack(grasp_clust))
-        normal = math.atan2(pca.components_[0,1],pca.components_[0,0])
-        var_ratio = deepcopy(pca.explained_variance_ratio_)
-        grasp_reduced = pca.inverse_transform(pca_tf)
-        comp_ang = math.atan2(ax-cx,ay-cy)
-        cand_ang = np.array([normal, normal-np.pi, normal+np.pi])
-        align_normal = cand_ang[np.argmin(np.absolute(cand_ang - comp_ang))]
-        #align_normal = comp_ang
+        all_pts = np.array([(i,j) for i in range(img_affs.shape[0]) for j in range(img_affs.shape[1]) if img_affs[i,j] > 0])
+        pca_all_d1 = PCA(n_components=1)
+        pca_all_d2 = PCA(n_components=2)
+        pca_all_tf = pca_all_d1.fit_transform(np.stack(all_pts))
+        pca_all_d2.fit(np.stack(all_pts))
+        #normal = math.atan2(pca_all.components_[0,1],pca_all.components_[0,0])
+        var_ratio = deepcopy(pca_all_d2.explained_variance_ratio_)
+        all_reduced = pca_all_d1.inverse_transform(pca_all_tf)
+        c = pca_all_d1.mean_
+        max_dist = -1
+        for pt in all_reduced:
+            dist = np.sqrt((pt[0] - c[0])**2.0 + (pt[1] - c[1])**2.0)
+            if dist > max_dist:
+                max_dist = dist
+                max_pt_a = pt
+        max_dist = -1
+        for pt in all_reduced:
+            dist = np.sqrt((pt[0] - max_pt_a[0])**2.0 + (pt[1] - max_pt_a[1])**2.0)
+            if dist > max_dist:
+                max_dist = dist
+                max_pt_b = pt
+        dist_a = np.sqrt((grasp_med[0] - max_pt_a[0])**2.0 + (grasp_med[1] - max_pt_a[1])**2.0)
+        dist_b = np.sqrt((grasp_med[0] - max_pt_b[0])**2.0 + (grasp_med[1] - max_pt_b[1])**2.0)
+        if dist_a < dist_b:
+            g_pt = max_pt_a
+            a_pt = max_pt_b
+        else:
+            g_pt = max_pt_b
+            a_pt = max_pt_a
 
         # Get grasp end along normal dim
-        e_dists = [math.sqrt((ay - p[0])**2.0 + (ax - p[1])**2.0) for p in grasp_reduced]
+        '''e_dists = [math.sqrt((ay - p[0])**2.0 + (ax - p[1])**2.0) for p in grasp_reduced]
         e_idx = np.argmax(np.array(e_dists))
         ey, ex = np.array(grasp_reduced[e_idx])
 
@@ -93,10 +103,9 @@ class ImageProc:
         # Get tooltip end along normal dim
         t_dists = [math.sqrt((ey - p[0])**2.0 + (ex - p[1])**2.0) for p in grasp_reduced]
         t_idx = np.argmax(np.array(t_dists))
-        ty, tx = np.array(grasp_reduced[t_idx])
+        ty, tx = np.array(grasp_reduced[t_idx])'''
 
-        grasp_diff = np.array(output_scale.transform(np.array([ncy,ncx]).reshape(1,-1)) - output_scale.transform(np.array([ey,ex]).reshape(1,-1))).squeeze(0)
-        return [align_normal,var_ratio,(ey,ex),(cy,cx),(ncy,ncx),(ty,tx)]
+        return [var_ratio,g_pt,a_pt]
 
     def save_features(self):
 
@@ -163,7 +172,7 @@ if __name__ == '__main__':
     #proc.save_features()
     with open(proc.im_dir + "tt_w_var.pkl", 'rb') as handle:
         pt_dict = pickle.load(handle)
-    #pt_dict = dict()
+    pt_dict = dict()
     files = sorted([f for f in os.listdir(proc.im_dir) if f.endswith(".mat")])
     #files = files[start:min(len(files),start+1000)]
     c1 = 0
@@ -176,7 +185,7 @@ if __name__ == '__main__':
             pt_dict[name] = data
         c1 += 1
         if c1 % 10 == 0:
-            with open(proc.im_dir + "tt_w_var_out.pkl", 'wb') as handle:
+            with open(proc.im_dir + "tt_w_var_pca_out_all.pkl", 'wb') as handle:
                 pickle.dump(pt_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    with open(proc.im_dir + "tt_w_var_out.pkl", 'wb') as handle:
+    with open(proc.im_dir + "tt_w_var_pca_out_all.pkl", 'wb') as handle:
         pickle.dump(pt_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
