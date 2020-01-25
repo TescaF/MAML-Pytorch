@@ -35,8 +35,8 @@ class Affordances:
         self.CLUSTER = CLUSTER
         self.grasp_pos = grasp
         self.inputs = inputs
-        self.px_to_cm = 1.0/5.0 #7.6
-        self.cm_to_std = [1.33/42.0,1.0/42.0] # Standardize 480x640 image dims
+        #self.px_to_cm = 1.0/5.0 #7.6
+        #self.cm_to_std = [1.33/42.0,1.0/42.0] # Standardize 480x640 image dims
         self.rand = RandomState(222)
         self.affs = []
         self.sample_size = samples
@@ -49,9 +49,20 @@ class Affordances:
         if self.inputs is None:
             with open(fts_loc, 'rb') as handle:
                 self.inputs = pickle.load(handle)       #dict(img) = [[4096x1], ... ]
-        categories = list(sorted(set([k.split("_")[0] for k in self.inputs.keys()])))
+        with open(os.path.expanduser("~") + "/data/cropped/tt_pca_out.pkl", 'rb') as handle:
+            self.aff_pts = pickle.load(handle)      #dict(category) = [img1, img2, ...]
+
+        keys = self.inputs.keys()
+        categories = list(sorted(set([k.split("_")[0] for k in keys])))
         self.all_categories = [c for c in categories if c is not categories[exclude]]
-        self.all_keys = list(sorted(self.inputs.keys()))
+        if train:
+            valid_keys = [k for k in keys if not k.startswith(categories[exclude])]
+        else:
+            valid_keys = [k for k in keys if k.startswith(categories[exclude])]
+        self.neg_keys = list(sorted(set([k for k in keys if not k.startswith(categories[exclude])])))
+        self.valid_keys = list(sorted(set(valid_keys)))
+        self.valid_objs = list(sorted(set([k.split("_00")[0] for k in self.valid_keys])))
+
         print("Categories: " + str(categories))
         self.exclude = exclude
         if exclude >= 0:
@@ -60,66 +71,57 @@ class Affordances:
             else:
                 print("Testing on category '" + str(categories[exclude]) + "'")
 
-        # Load image affordance locations
-        self.valid_keys, training_keys, all_vals = [],[],[]
-        with open(os.path.expanduser("~") + "/data/cropped/tt_pca_out.pkl", 'rb') as handle:
-            self.aff_pts = pickle.load(handle)      #dict(category) = [img1, img2, ...]
-        with open(os.path.expanduser("~") + "/data/cropped_grasp_positions.pkl", 'rb') as handle:
-            self.grasps = pickle.load(handle)      #dict(category) = [img1, img2, ...]
-        for aff in range(2,7):
-            aff_loc = os.path.expanduser("~") + "/data/cropped_aff_" + str(aff) + "_positions.pkl"
-            with open(aff_loc, 'rb') as handle:
-                aff_data = pickle.load(handle)      #dict(category) = [img1, img2, ...]
-            aff_keys = list(aff_data.keys())
-            for k in aff_keys:
-                if k not in self.all_keys:
-                    aff_data.pop(k, None)
-
-            keys = list(sorted(aff_data.keys()))
-            if exclude >= 0:
-                train_valid_keys = [k for k in keys if (aff_data[k][-1] is not None) and (not k.startswith(categories[exclude]))]
-                test_valid_keys = [k for k in keys if (aff_data[k][-1] is not None) and (k.startswith(categories[exclude]))]
-            else:
-                test_valid_keys = train_valid_keys = [k for k in keys if aff_data[k][-1] is not None]
-            training_keys += train_valid_keys
-
-            if train:
-                valid_keys = train_valid_keys    
-            else:
-                valid_keys = test_valid_keys
-            self.valid_keys += valid_keys
-            vals_m = np.matrix([aff_data[k][-1] for k in valid_keys])
-            if vals_m.shape[1] > 0:
-                all_vals.append(vals_m)
-            self.affs.append([valid_keys, aff_data])
-
-        self.valid_keys = list(sorted(set(self.valid_keys)))
         self.batch_size = batchsz
         self.dim_output = dim_out
-        self.output_scale = preprocessing.MinMaxScaler(feature_range=(-1,1))
-        self.output_scale.fit(np.matrix([[0,-110],[220,110]]))
-        self.tf_scale = preprocessing.MinMaxScaler(feature_range=(-1,1))
-        self.tf_scale.fit(np.matrix([[0,-110],[220,110]]))
-        all_vals = self.expand_outputs()
+
+        if k_qry == -1:
+            self.num_objs_per_batch = len([o for o in self.valid_objs if o.startswith(categories[exclude])])
+        else:
+            self.num_objs_per_batch = k_shot + k_qry
+
+        self.large_categories = []
+        obj_counts = [o.split("_")[0] for o in self.valid_objs]
+        objs = list(sorted(set(obj_counts)))
+        self.cat_objs = dict()
+        for o in range(len(objs)):
+            self.cat_objs[objs[o]] = sorted([k for k in self.valid_objs if k.startswith(objs[o])])
+            if obj_counts.count(objs[o]) >= self.num_objs_per_batch:
+                self.large_categories.append(objs[o])
+        #self.categories = list(sorted(set([k1.split("_")[0] for k1 in all_objs if sum([o.startswith(k1.split("_")[0]) for o in all_objs]) >= self.num_samples_per_class])))
+        print(self.large_categories)
+
+        all_vals = self.normalize_outputs()
         self.val_range = [np.min(all_vals,axis=0), np.max(all_vals,axis=0)]
         self.scale = preprocessing.StandardScaler()
         self.scale.fit(all_vals)
         print("Scaler: " + str(self.scale.scale_) + ", " + str(self.scale.mean_))
-        all_objs = list(sorted(set([k.split("_00")[0] for k in self.valid_keys])))
-        if k_qry == -1:
-            self.num_samples_per_class = len([o for o in all_objs if o.startswith(categories[exclude])])
-        else:
-            self.num_samples_per_class = k_shot + k_qry
-        self.categories = []
-        obj_counts = [o.split("_")[0] for o in all_objs]
-        objs = list(sorted(set(obj_counts)))
-        for o in range(len(objs)):
-            if obj_counts.count(objs[o]) >= self.num_samples_per_class:
-                self.categories.append(objs[o])
-        #self.categories = list(sorted(set([k1.split("_")[0] for k1 in all_objs if sum([o.startswith(k1.split("_")[0]) for o in all_objs]) >= self.num_samples_per_class])))
-        print(self.categories)
 
     def select_keys(self):
+        pos_keys,pos_affs,neg_keys = [],[],[]
+        #if len(self.categories) == 0:
+        c = self.rand.choice(len(self.large_categories), self.batch_size, replace=True)
+        # Each "batch" is an object class
+        for t in range(self.batch_size):
+            # Get set of negative examples for img classification
+            p_keys,n_keys = [],[]
+            cat = self.large_categories[c[t]]
+            pos_objs = self.cat_objs[cat]
+            k = self.rand.choice(len(pos_objs), self.num_objs_per_batch, replace=False)
+            for n in range(self.num_objs_per_batch):
+                sample_keys = list([key for key in self.valid_keys if key.startswith(pos_objs[k[n]])])
+                sk = self.rand.choice(len(sample_keys), self.sample_size, replace=False)
+                for s in range(self.sample_size):
+                    p_keys.append(sample_keys[sk[s]])
+
+            neg_cands = [n for n in self.neg_keys if not n.startswith(cat)]
+            neg_cats = self.rand.choice(len(neg_cands), self.sample_size * self.num_objs_per_batch, replace=False)
+            for i in range(self.sample_size * self.num_objs_per_batch):
+                n_keys.append(neg_cands[neg_cats[i]])
+            neg_keys.append(n_keys)
+            pos_keys.append(p_keys)
+        return pos_keys, neg_keys
+
+    def select_keys_old(self):
         pos_keys,pos_affs,neg_keys = [],[],[]
         #if len(self.categories) == 0:
         c = self.rand.choice(len(self.categories), self.batch_size, replace=True)
@@ -147,6 +149,16 @@ class Affordances:
             pos_affs.append(p_affs)
         return pos_keys, pos_affs, neg_keys
 
+    def normalize_outputs(self):
+        expanded = []
+        for k in self.neg_keys:
+                var_ratio, c1, c2 = self.aff_pts[k.split("_label")[0]]
+                x = np.sqrt((c2[0]-c1[0])**2.0 + (c2[1]-c1[1])**2.0) 
+                y = x * var_ratio[1] / var_ratio[0]
+                expanded.append(np.array([x,y]))
+                expanded.append(np.array([x,-y]))
+        return np.stack(expanded)
+
     def expand_outputs(self):
         expanded = []
         keys = [k for k in list(self.aff_pts.keys()) if self.aff_pts[k] is not None]
@@ -167,62 +179,41 @@ class Affordances:
         return np.stack(expanded)
 
     def next(self):
-        pos_keys, pos_affs, neg_keys = self.select_keys()
-        init_inputs = np.zeros([self.batch_size, self.num_samples_per_class * self.sample_size, 14,14,1024])
-        neg_inputs = np.zeros([self.batch_size, self.num_samples_per_class * self.sample_size, 14,14,1024])
-        outputs = np.zeros([self.batch_size, self.num_samples_per_class * self.sample_size, self.dim_output])
+        pos_keys, neg_keys = self.select_keys()
+        init_inputs = np.zeros([self.batch_size, self.num_objs_per_batch * self.sample_size, 14,14,1024])
+        neg_inputs = np.zeros([self.batch_size, self.num_objs_per_batch * self.sample_size, 14,14,1024])
+        outputs = np.zeros([self.batch_size, self.num_objs_per_batch * self.sample_size, self.dim_output])
         # Each "batch" is an object class
         for t in range(self.batch_size):
             output_list,input_list,negative_list = [],[],[]
             # Select a transform for this batch
-            tf_a = self.rand.uniform(-np.pi,np.pi)
-            max_r = math.sqrt(2*(450.0**2.0))/2.0
-            tf_r = self.rand.uniform(0,0.5)
+            #tf_a = self.rand.uniform(-np.pi,np.pi)
+            #max_r = math.sqrt(2*(450.0**2.0))/2.0
+            #tf_r = self.rand.uniform(0,0.5)
+            tf = np.array([self.rand.uniform(-1,1), self.rand.uniform(-1,1)])
+            scale = self.rand.uniform(0.5, 2.0)
             # Number of objects per class
-            for c in range(self.num_samples_per_class):
-                x_len, ratios = [], []
+            for c in range(self.num_objs_per_batch):
                 # Number of images per object
+                dims = []
                 pos = pos_keys[t][c*self.sample_size:]
                 neg = neg_keys[t][c*self.sample_size:]
                 for n in range(self.sample_size):
                     negative_list.append(self.inputs[pos[n]].reshape((1024,14,14)).transpose())
                     input_list.append(self.inputs[pos[n]].reshape((1024,14,14)).transpose())
-                    #center = self.grasps[pos_keys[t][n]]
-                    if pos[n].split("_label")[0] in self.aff_pts.keys() and not self.aff_pts[pos[n].split("_label")[0]] is None:
-                        # Centers: grasp end, grasp absolute center, grasp center, tooltip
-                        var_ratio, c1, c2 = self.aff_pts[pos[n].split("_label")[0]]
-                        #align_normal, var_ratio, c1, c2, c3, c4 = self.aff_pts[pos[n].split("_label")[0]]
-                        #print(pos[n].split("_label")[0] + ": " + str(c2) + str(c1) + "  " + str(np.sqrt((c2[0]-c1[0])**2.0 + (c2[1]-c1[1])**2.0)))
-                    else:
-                        pdb.set_trace()
-                        align_normal, var_ratio, grasp_diff, center = self.get_grasp_normal(pos[n].split("_label")[0], grasp_aff=-1)
-                        c1, c2, c3, c4 = center
-
-                    x_len.append(np.sqrt((c2[0]-c1[0])**2.0 + (c2[1]-c1[1])**2.0))
-                    ratios.append(var_ratio)
-                    #pt = np.array(c4) - np.array(c3)
-                    #r1 = np.sqrt(pt[0]**2 + pt[1]**2)
-                new_r = max_r * tf_r
-                med_len = np.median(np.stack(x_len))
-                x = med_len + (new_r * math.sin(tf_a))
-                med_r = np.median(np.stack(ratios)[:,1] / np.stack(ratios)[:,0])
-                y = (med_len * med_r * np.sign(math.cos(tf_a))) + (new_r * med_r * math.cos(tf_a))
-                #new_r = max_r * tf_r
-                #x_len = np.sqrt((c2[0]-c1[0])**2.0 + (c2[1]-c1[1])**2.0) 
-                #pts.append(x_len)
-                #x = x_len + (new_r * math.sin(tf_a))
-                #y = ((x_len * var_ratio[1] / var_ratio[0]) + new_r) * math.cos(tf_a)
-
-
-                out = self.scale.transform(np.array([x,y]).reshape(1,-1)).squeeze()
+                    var_ratio, c1, c2 = self.aff_pts[pos[n].split("_label")[0]]
+                    x = np.sqrt((c2[0]-c1[0])**2.0 + (c2[1]-c1[1])**2.0) 
+                    y = x * var_ratio[1] / var_ratio[0]
+                    dims.append(self.scale.transform(np.array([x,y * np.sign(tf[1])]).reshape(1,-1)).squeeze())
+                med_dim = np.median(np.stack(dims),axis=0)
+                out = med_dim + tf
+                #out = scale * (med_dim + tf)
                 for i in range(self.sample_size):
                     output_list.append(out)
-                #print(pos[0] + ": " + str(out) + " " + str([x,y]))
 
             init_inputs[t] = np.stack(input_list)
             neg_inputs[t] = np.stack(negative_list)
             outputs[t] = np.stack(output_list)
-            #outputs[t] = np.repeat(np.expand_dims(np.mean(output_list,axis=0),axis=0), output_list.shape[0], axis=0)
         return init_inputs, neg_inputs, outputs, pos_keys, neg_keys
 
     def project_tf(self, name_spt, tf, scale=-1):

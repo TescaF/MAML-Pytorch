@@ -130,18 +130,19 @@ class ImageProc:
             images.append(im)
             l = cv.warpPerspective(label, np.dot(self.offset,self.tf), (450,450))
             labels.append([f.split("_rgb")[0],l])
-            aff_data, feats = self.get_img_data(images[-1], labels[-1][1])
+        aff_data, feats1 = self.get_img_data([images[-1]], [labels[-1][1]])
+        aff_data, feats2 = self.get_img_data(images[-1], labels[-1][1])
 
-            if aff_data is not None:
-                features[labels[-1][0]] = feats
-                for a in range(2,7):
-                    pos = [a, aff_data[a-2]]
-                    pos_dict[a-2][labels[-1][0]] = pos
-            c1+=1
-            if c1 == len(files) or (c1 % 100 == 0):
-                with open(self.base_dir + str(c1) + "_rem_cropped_resnet_pool_fts-14D.pkl", 'wb') as handle:
-                    pickle.dump(features, handle, protocol=pickle.HIGHEST_PROTOCOL)
-                features = dict()
+        if aff_data is not None:
+            features[labels[-1][0]] = feats
+            for a in range(2,7):
+                pos = [a, aff_data[a-2]]
+                pos_dict[a-2][labels[-1][0]] = pos
+        c1+=1
+        if c1 == len(files) or (c1 % 100 == 0):
+            with open(self.base_dir + str(c1) + "_rem_cropped_resnet_pool_fts-14D.pkl", 'wb') as handle:
+                pickle.dump(features, handle, protocol=pickle.HIGHEST_PROTOCOL)
+            features = dict()
         '''for a in range(2,7):
             with open(self.base_dir + "features/cropped_aff_" + str(a) + "_positions.pkl", 'wb') as handle:
                 pickle.dump(pos_dict[a-2], handle, protocol=pickle.HIGHEST_PROTOCOL)'''

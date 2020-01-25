@@ -93,7 +93,6 @@ def main():
                        dim_out=dim_output,
                        grasp=None)
 
-    db_test.output_scale = db_train.output_scale
     if CLUSTER:
         device = torch.device('cuda:0')
         save_path = home + '/data/models/model_tasksz' + str(args.task_num) + '_batchsz' + str(args.k_spt) + '_lr' + str(args.update_lr) + '_mr' + str(args.meta_lr) + '_exclude' + str(args.exclude) + '_epoch'

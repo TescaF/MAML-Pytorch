@@ -293,7 +293,6 @@ def main():
                 next_kf = tf_list[k+1][0]
                 ref.append(next_kf - prev)
                 prev = next_kf
-                pdb.set_trace()
                 sse += ((inter_tf[-1] - np.repeat(ref[-1].reshape(1,-1),len(obj_names),axis=0))**2.0).sum(axis=1).sum(axis=1)
             pdb.set_trace()
 

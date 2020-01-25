@@ -58,6 +58,54 @@ class Meta(nn.Module):
             losses.append(torch.sum(dists * s))
         return np.sum(np.array(losses))/logits.shape[0]
 
+    def adadelta_update(self, net, update_step, data_in, y_spt, y_qry, class_tgt, spt_idx, qry_idx):
+        test_losses = [0 for _ in range(update_step + 1)]
+        ft_train_losses = [0 for _ in range(update_step)]
+        pt_train_losses = [0 for _ in range(update_step)]
+        x_spt, x_qry = data_in
+        #x_spt, x_qry, n_spt = data_in
+        all_input = torch.cat(data_in)
+        eps = 1e-6
+        rho = self.update_lr
+
+        with torch.no_grad():
+            logits_q = net(all_input, vars=None)[spt_idx:qry_idx,2:]
+            loss_q = F.mse_loss(logits_q, y_qry)
+            test_losses[0] += loss_q.item()
+
+        squares, deltas = [], []
+        s_weights = deepcopy(list(net.parameters()))
+        for p in s_weights:
+            squares.append(torch.zeros_like(p))
+            deltas.append(torch.zeros_like(p))
+
+        for k in range(update_step):
+            logits_r = net(all_input, vars=(None if k==0 else s_weights))[:spt_idx,2:]
+            loss_r = F.mse_loss(logits_r, y_spt)
+            pt_train_losses[k] += loss_r.item()
+            grads = list(torch.autograd.grad(loss_r, (net.parameters() if k==0 else s_weights))) 
+        
+            for p in range(len(grads)):
+                grad = grads[p]
+                squares[p].mul_(rho).addcmul_(1-rho, grad, grad)
+                std = squares[p].add_(eps).sqrt_()
+                curr_delta = deltas[p].add(eps).sqrt_().div_(std).mul_(grad)
+                if k == 0:
+                    s_weights[p] = net.parameters()[p] - curr_delta
+                else:
+                    s_weights[p] = s_weights[p] - curr_delta
+                deltas[p].mul_(rho).addcmul_(1-rho, curr_delta, curr_delta)
+
+            with torch.no_grad():
+                logits_q = net(all_input, vars=s_weights)[spt_idx:qry_idx,2:]
+                loss_q = F.mse_loss(logits_q, y_qry)
+                test_losses[k+1] += loss_q.item()
+
+        logits_q = net(all_input, vars=s_weights)[spt_idx:qry_idx,2:]
+        loss_q = F.mse_loss(logits_q, y_qry)
+        pdb.set_trace()
+        return loss_q, [test_losses, ft_train_losses, pt_train_losses], s_weights
+
     def update(self, net, update_step, data_in, y_spt, y_qry, class_tgt, spt_idx, qry_idx):
         sig = nn.Sigmoid()
         #sw = deepcopy(net.parameters())
@@ -65,7 +113,8 @@ class Meta(nn.Module):
         test_losses = [0 for _ in range(update_step + 1)]
         ft_train_losses = [0 for _ in range(update_step)]
         pt_train_losses = [0 for _ in range(update_step)]
-        x_spt, x_qry, n_spt = data_in
+        x_spt, x_qry = data_in
+        #x_spt, x_qry, n_spt = data_in
         all_input = torch.cat(data_in)
 
         with torch.no_grad():
@@ -106,8 +155,8 @@ class Meta(nn.Module):
         tgt_set = torch.cat([torch.ones(idx_b).long().cuda(), torch.zeros(n_spt.shape[1]).long().cuda()]) 
 
         for i in range(task_num):
-            full_set = [x_spt[i],x_qry[i],n_spt[i]]
-            loss_q, losses, w = self.update(self.net, self.update_step, full_set, y_spt[i], y_qry[i], tgt_set, idx_a, idx_b)
+            full_set = [x_spt[i],x_qry[i]] #,n_spt[i]]
+            loss_q, losses, w = self.adadelta_update(self.net, self.update_step, full_set, y_spt[i], y_qry[i], tgt_set, idx_a, idx_b)
             test_losses = [test_losses[j] + losses[0][j] for j in range(len(test_losses))]
             ft_train_loss = [ft_train_loss[j] + losses[1][j] for j in range(len(ft_train_loss))]
             pt_train_loss = [pt_train_loss[j] + losses[2][j] for j in range(len(pt_train_loss))]
@@ -133,10 +182,10 @@ class Meta(nn.Module):
         pt_train_loss = [0 for _ in range(self.update_step_test)]
         idx_a = x_spt.shape[0]
         idx_b = idx_a + x_qry.shape[0]
-        full_set = [x_spt,x_qry,n_spt]
+        full_set = [x_spt,x_qry] #,n_spt]
         tgt_set = torch.cat([torch.ones(idx_b).long().cuda(), torch.zeros(n_spt.shape[0]).long().cuda()]) 
 
-        test_loss, losses, w = self.update(net, self.update_step_test, full_set, y_spt, y_qry, tgt_set, idx_a, idx_b)
+        test_loss, losses, w = self.adadelta_update(net, self.update_step_test, full_set, y_spt, y_qry, tgt_set, idx_a, idx_b)
         test_losses = losses[0]
         ft_train_loss = losses[1]
         pt_train_loss = losses[2]
