@@ -25,7 +25,7 @@ from numpy.random import RandomState
 import os.path
 
 class Affordances:
-    def __init__(self, CLUSTER, inputs, mode, train, exclude, samples, batchsz, k_shot, k_qry, dim_out, grasp):
+    def __init__(self, CLUSTER, inputs, train, exclude, samples, batchsz, k_shot, k_qry, dim_out, grasp):
         """
         :param batchsz: task num
         :param k_shot: number of samples for fine-tuning
@@ -45,14 +45,10 @@ class Affordances:
         self.offset = np.array([[ 1 , 0 , -110], [ 0 , 1 , -60], [ 0 , 0 ,    1    ]])
 
         # Load image features
-        fts_loc = "/home/tesca/data/part-affordance-dataset/features/" + mode + "_resnet_pool_fts-14D.pkl"
-        if self.inputs is None:
-            with open(fts_loc, 'rb') as handle:
-                self.inputs = pickle.load(handle)       #dict(img) = [[4096x1], ... ]
         with open(os.path.expanduser("~") + "/data/cropped/tt_pca_out.pkl", 'rb') as handle:
             self.aff_pts = pickle.load(handle)      #dict(category) = [img1, img2, ...]
 
-        keys = self.inputs.keys()
+        keys = self.aff_pts.keys()
         categories = list(sorted(set([k.split("_")[0] for k in keys])))
         self.all_categories = [c for c in categories if c is not categories[exclude]]
         if train:
@@ -121,38 +117,10 @@ class Affordances:
             pos_keys.append(p_keys)
         return pos_keys, neg_keys
 
-    def select_keys_old(self):
-        pos_keys,pos_affs,neg_keys = [],[],[]
-        #if len(self.categories) == 0:
-        c = self.rand.choice(len(self.categories), self.batch_size, replace=True)
-        # Each "batch" is an object class
-        for t in range(self.batch_size):
-            # Get set of negative examples for img classification
-            p_keys,p_affs,n_keys = [],[],[]
-            cat = self.categories[c[t]]
-            neg_cands = [n for n in self.all_categories if not n == cat]
-            neg_cats = self.rand.choice(len(neg_cands), self.num_samples_per_class, replace=True)
-            valid_affs = [a for a in range(len(self.affs)) if any([o.startswith(cat) for o in self.affs[a][0]])]
-            valid_keys, aff_data = self.affs[valid_affs[self.rand.choice(len(valid_affs))]]
-            obj_keys = list(sorted(set([k.split("_00")[0] for k in valid_keys if k.startswith(cat)])))
-            k = self.rand.choice(len(obj_keys), self.num_samples_per_class, replace=False)
-            for n in range(self.num_samples_per_class):
-                negative_keys = list([key for key in self.all_keys if key.startswith(neg_cands[neg_cats[n]])])
-                sample_keys = list([key for key in valid_keys if key.startswith(obj_keys[k[n]])])
-                sk = self.rand.choice(len(sample_keys), self.sample_size, replace=False)
-                for s in range(self.sample_size):
-                    n_keys.append(negative_keys[sk[s]])
-                    p_keys.append(sample_keys[sk[s]])
-                    p_affs.append(aff_data[p_keys[-1]][-1])
-            neg_keys.append(n_keys)
-            pos_keys.append(p_keys)
-            pos_affs.append(p_affs)
-        return pos_keys, pos_affs, neg_keys
-
     def normalize_outputs(self):
         expanded = []
         for k in self.neg_keys:
-                var_ratio, c1, c2 = self.aff_pts[k.split("_label")[0]]
+                var_ratio, c1, c2 = self.aff_pts[k] #.split("_label")[0]]
                 x = np.sqrt((c2[0]-c1[0])**2.0 + (c2[1]-c1[1])**2.0) 
                 y = x * var_ratio[1] / var_ratio[0]
                 expanded.append(np.array([x,y]))
@@ -180,16 +148,10 @@ class Affordances:
 
     def next(self):
         pos_keys, neg_keys = self.select_keys()
-        init_inputs = np.zeros([self.batch_size, self.num_objs_per_batch * self.sample_size, 14,14,1024])
-        neg_inputs = np.zeros([self.batch_size, self.num_objs_per_batch * self.sample_size, 14,14,1024])
         outputs = np.zeros([self.batch_size, self.num_objs_per_batch * self.sample_size, self.dim_output])
         # Each "batch" is an object class
         for t in range(self.batch_size):
-            output_list,input_list,negative_list = [],[],[]
-            # Select a transform for this batch
-            #tf_a = self.rand.uniform(-np.pi,np.pi)
-            #max_r = math.sqrt(2*(450.0**2.0))/2.0
-            #tf_r = self.rand.uniform(0,0.5)
+            output_list = []
             tf = np.array([self.rand.uniform(-1,1), self.rand.uniform(-1,1)])
             scale = self.rand.uniform(0.5, 2.0)
             # Number of objects per class
@@ -197,24 +159,18 @@ class Affordances:
                 # Number of images per object
                 dims = []
                 pos = pos_keys[t][c*self.sample_size:]
-                neg = neg_keys[t][c*self.sample_size:]
                 for n in range(self.sample_size):
-                    negative_list.append(self.inputs[pos[n]].reshape((1024,14,14)).transpose())
-                    input_list.append(self.inputs[pos[n]].reshape((1024,14,14)).transpose())
-                    var_ratio, c1, c2 = self.aff_pts[pos[n].split("_label")[0]]
+                    var_ratio, c1, c2 = self.aff_pts[pos[n]] #.split("_label")[0]]
                     x = np.sqrt((c2[0]-c1[0])**2.0 + (c2[1]-c1[1])**2.0) 
                     y = x * var_ratio[1] / var_ratio[0]
                     dims.append(self.scale.transform(np.array([x,y * np.sign(tf[1])]).reshape(1,-1)).squeeze())
                 med_dim = np.median(np.stack(dims),axis=0)
                 out = med_dim + tf
-                #out = scale * (med_dim + tf)
                 for i in range(self.sample_size):
                     output_list.append(out)
 
-            init_inputs[t] = np.stack(input_list)
-            neg_inputs[t] = np.stack(negative_list)
             outputs[t] = np.stack(output_list)
-        return init_inputs, neg_inputs, outputs, pos_keys, neg_keys
+        return pos_keys, neg_keys, outputs
 
     def project_tf(self, name_spt, tf, scale=-1):
         spt_inputs = np.zeros([self.num_samples_per_class * self.sample_size, 14,14,1024])
@@ -245,10 +201,10 @@ class Affordances:
                 pdb.set_trace()
             sk = self.rand.choice(len(sample_keys), self.sample_size, replace=False)
             for s in range(self.sample_size):
-                neg_fts = self.inputs[negative_keys[nk[s]]]
-                negative_list.append(neg_fts.reshape((1024,14,14)).transpose())
+                #neg_fts = self.inputs[negative_keys[nk[s]]]
+                #negative_list.append(neg_fts.reshape((1024,14,14)).transpose())
                 im = sample_keys[sk[s]]
-                fts = self.inputs[im]
+                #fts = self.inputs[im]
                 if im.startswith(name_spt):
                     pose = np.matrix([tf[0]])
                     tf_xy = np.array(np.dot(pose,self.grasp_pos[1])) #.reshape(1,-1)
@@ -265,78 +221,19 @@ class Affordances:
 
                     spt_output_list.append(out)
                     #spt_output_list.append(out)
-                    spt_input_list.append(fts.reshape((1024,14,14)).transpose())
+                    #spt_input_list.append(fts.reshape((1024,14,14)).transpose())
                     qry_output_list.append(np.matrix([0,0]))
-                    qry_input_list.append(fts.reshape((1024,14,14)).transpose())
+                    #qry_input_list.append(fts.reshape((1024,14,14)).transpose())
                 else:
                     qry_output_list.append(np.matrix([0,0]))
-                    qry_input_list.append(fts.reshape((1024,14,14)).transpose())
+                    #qry_input_list.append(fts.reshape((1024,14,14)).transpose())
                 qry_keys.append(sample_keys[sk[s]])
-        spt_inputs = np.stack(spt_input_list)
-        qry_inputs = np.stack(qry_input_list)
+        spt_inputs = None #np.stack(spt_input_list)
+        qry_inputs = None #np.stack(qry_input_list)
         neg_inputs = np.stack(negative_list)
         spt_outputs = np.stack(spt_output_list)
         qry_outputs = np.stack(qry_output_list)
         return spt_inputs, qry_inputs, neg_inputs, spt_outputs, qry_outputs, qry_keys,(sc_min + (sc_ivl * scale))
-
-        # Get support images
-        # For each support image, get centroid and direction of grasp
-        # Get tf wrt grasp
-        # Add to outputs
-        # Get negative images
-        # Get query images
-
-    def get_grasp_normal(self, img_name, aff=-1, grasp_aff=1):
-        if self.CLUSTER:
-            label = scipy.io.loadmat(self.aff_dir + img_name + "_label.mat")
-        else:
-            label = scipy.io.loadmat(self.aff_dir + img_name.split("_00")[0] + "/" + img_name + "_label.mat")
-        img_affs = cv.warpPerspective(label['gt_label'], np.dot(self.offset,self.tf), (450,450))
-
-        if aff == -1:
-            aff_pts = np.matrix([(i,j) for i in range(img_affs.shape[0]) for j in range(img_affs.shape[1]) if img_affs[i,j] > 1 and img_affs[i,j] < 7])
-        else:
-            aff_pts = np.matrix([(i,j) for i in range(img_affs.shape[0]) for j in range(img_affs.shape[1]) if img_affs[i,j] == aff])
-        clusters = sklearn.cluster.DBSCAN(eps=3, min_samples=10).fit_predict(aff_pts)
-        aff_clust = [aff_pts[i] for i in range(len(aff_pts)) if clusters[i] > -1]
-        ay, ax = np.median(aff_clust,axis=0).squeeze(0)
-
-        if grasp_aff == -1:
-            grasp_pts = np.matrix([(i,j) for i in range(img_affs.shape[0]) for j in range(img_affs.shape[1]) if img_affs[i,j] >= 1])
-        else:
-            grasp_pts = np.matrix([(i,j) for i in range(img_affs.shape[0]) for j in range(img_affs.shape[1]) if img_affs[i,j] == grasp_aff])
-        clusters = sklearn.cluster.DBSCAN(eps=3, min_samples=20).fit_predict(grasp_pts)
-        grasp_clust = [grasp_pts[i] for i in range(len(grasp_pts)) if clusters[i] > -1]
-        cy, cx = np.median(grasp_clust,axis=0).squeeze(0)
-
-        # Get edge normal
-        pca = PCA(n_components=2)
-        pca_tf = pca.fit_transform(np.stack(grasp_clust))
-        normal = math.atan2(pca.components_[0,1],pca.components_[0,0])
-        grasp_reduced = pca.inverse_transform(pca_tf)
-        comp_ang = math.atan2(ax-cx,ay-cy)
-        cand_ang = np.array([normal, normal-np.pi, normal+np.pi])
-        align_normal = cand_ang[np.argmin(np.absolute(cand_ang - comp_ang))]
-        #align_normal = comp_ang
-
-        # Get grasp end along normal dim
-        e_dists = [math.sqrt((ay - p[0])**2.0 + (ax - p[1])**2.0) for p in grasp_reduced]
-        e_idx = np.argmax(np.array(e_dists))
-        ey, ex = np.array(grasp_reduced[e_idx])
-
-        # Get grasp center along normal dim
-        c_dists = [math.sqrt((cy - p[0])**2.0 + (cx - p[1])**2.0) for p in grasp_reduced]
-        c_idx = np.argmin(np.array(c_dists))
-        ncy, ncx = np.array(grasp_reduced[c_idx])
-
-        # Get tooltip end along normal dim
-        t_dists = [math.sqrt((ey - p[0])**2.0 + (ex - p[1])**2.0) for p in grasp_reduced]
-        t_idx = np.argmax(np.array(t_dists))
-        ty, tx = np.array(grasp_reduced[t_idx])
-
-        grasp_diff = np.array(self.scale.transform(np.array([ncy,ncx]).reshape(1,-1)) - self.scale.transform(np.array([ey,ex]).reshape(1,-1))).squeeze(0)
-        # Centers: grasp end, grasp absolute center, grasp center, tooltip
-        return align_normal, pca.explained_variance_ratio_, grasp_diff, [(ey,ex),(cy,cx),(ncy,ncx),(ty,tx)]
 
 if __name__ == '__main__':
     IN = Affordances(5,3,3,2)
