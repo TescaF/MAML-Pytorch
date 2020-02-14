@@ -74,24 +74,40 @@ def main():
         save_path = os.getcwd() + '/data/models/model_batchsz' + str(args.k_spt) + '_stepsz' + str(args.update_lr) + '_exclude' + str(args.exclude) + '_epoch'
     #print(str(db_train.dim_input) + "-D input")
     base_config = [
-        ('linear', [128,512,True]),
+        ('conv2d', [64, 1, 3, 3, 2, 0]),
         ('relu', [True]),
-        ('linear', [1,128,True]),
-        ('reshape', [49]),
+        ('bn', [64]),
+        ('conv2d', [64, 64, 3, 3, 2, 0]),
         ('relu', [True]),
-        ('bn', [49]),
-        ('linear', [512,49,True]),
+        ('bn', [64]),
+        ('conv2d', [64, 64, 3, 3, 2, 0]),
         ('relu', [True]),
-        ('bn', [512])
+        ('bn', [64]),
+        ('conv2d', [64, 64, 3, 3, 2, 0]),
+        ('relu', [True]),
+        ('bn', [64]),
+        ('conv2d', [64, 64, 3, 3, 2, 0]),
+        ('relu', [True]),
+        ('bn', [64]),
+        #('avg_pool2d', [6, 1, 0]),
+        #('conv2d', [64, 64, 6, 6, 1, 0]),
+        #('relu', [True]),
+        #('bn', [64]),
+        ('flatten', []),
+        ('linear', [2, 64 * 6 * 6, True])
+        #('linear', [args.n_way, 64])
     ]
-    class_config = [('linear', [2,512,True])]
     reg_config = [
         ('linear', [64,512,True]),
-        ('linear', [2,64,True])]
-    maml = Meta(device, args, base_config, class_config, reg_config).to(device)
+        ('relu', [True]),
+        ('bn', [64]),
+        ('linear', [2,64,True])
+    ]
+    class_config = [('linear', [2,512,True])]
+    maml = Meta(device, args, base_config, class_config).to(device)
     if args.load == 1:
         print("Loading model: ")
-        load_path = save_path + "0.pt"
+        load_path = save_path + "0-v2.pt"
         print(load_path)
         m = torch.load(load_path)
         maml.load_state_dict(m)

@@ -34,15 +34,10 @@ class Affordances:
         """
         self.CLUSTER = CLUSTER
         self.grasp_pos = grasp
-        self.inputs = inputs
         #self.px_to_cm = 1.0/5.0 #7.6
         #self.cm_to_std = [1.33/42.0,1.0/42.0] # Standardize 480x640 image dims
         self.rand = RandomState(222)
-        self.affs = []
         self.sample_size = samples
-        self.aff_dir = os.path.expanduser("~") + "/data/cropped/"
-        self.tf = cv.getPerspectiveTransform(np.array([[445,170],[525,375],[125,375],[153,170]],dtype="float32"),np.array([[525,170],[525,425],[125,425],[125,170]],dtype="float32"))
-        self.offset = np.array([[ 1 , 0 , -110], [ 0 , 1 , -60], [ 0 , 0 ,    1    ]])
 
         # Load image features
         with open(os.path.expanduser("~") + "/data/cropped/tt_pca_out.pkl", 'rb') as handle:

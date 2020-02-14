@@ -157,7 +157,7 @@ class Learner(nn.Module):
     def grad_hook(self, grad):
         self.grads.append(grad)
 
-    def forward(self, x, vars=None, bn_training=True,dropout_rate=-1, post_hook=None, hook=None, grad_hook=None, last_layer=False,debug=False):
+    def forward(self, x, vars=None, bn_training=True,dropout_rate=-1, post_hook=None, hook=None, grad_hook=None, start_idx=0,debug=False):
         """
         This function can be called by finetunning, however, in finetunning, we dont wish to update
         running_mean/running_var. Thought weights/bias of bn is updated, it has been separated by fast_weights.
@@ -170,19 +170,13 @@ class Learner(nn.Module):
         """
         if vars is None:
             vars = self.vars
-        if last_layer:
-            c = -1
-            idx = len(vars)-2
-            bn_idx = len(self.vars_bn)
-        else:
-            c = 0
-            idx = 0 
-            bn_idx = 0
+        idx = 0 
+        bn_idx = 0
         p = 0
         hook_data = None
 
         self.grads = []
-        for name, param in self.config[c:]:
+        for name, param in self.config:
             if debug:
                 pdb.set_trace()
             if hook == p:
@@ -191,74 +185,58 @@ class Learner(nn.Module):
             if grad_hook == p:
                 h = x.register_hook(self.grad_hook)
 
-            p += 1
             if dropout_rate > 0:
-                x = F.dropout(x, p=dropout_rate, training=True)
-            #if torch.isnan(x).any():
-            #    pdb.set_trace()
+                if start_idx <= p:
+                    x = F.dropout(x, p=dropout_rate, training=True)
             if name is 'conv2d':
-                w, b = vars[idx], vars[idx + 1]
-                # remember to keep synchrozied of forward_encoder and forward_decoder!
-                x = F.conv2d(x, w, b, stride=param[4], padding=param[5])
+                if start_idx <= p:
+                    w, b = vars[idx], vars[idx + 1]
+                    x = F.conv2d(x, w, b, stride=param[4], padding=param[5])
                 idx += 2
-                # print(name, param, '\tout:', x.shape)
             elif name is 'convt2d':
-                w, b = vars[idx], vars[idx + 1]
-                # remember to keep synchrozied of forward_encoder and forward_decoder!
-                x = F.conv_transpose2d(x, w, b, stride=param[4], padding=param[5])
+                if start_idx <= p:
+                    w, b = vars[idx], vars[idx + 1]
+                    x = F.conv_transpose2d(x, w, b, stride=param[4], padding=param[5])
                 idx += 2
-                # print(name, param, '\tout:', x.shape)
-            elif name is 'reweight':
-                w = vars[idx]
-                x = torch.mul(x, w)
-                idx += 2
-                # print('forward:', idx, x.norm().item())
-            elif name is 'polar':
-                x = self.apply_polar_tf(x)
             elif name is 'linear':
-                w, b = vars[idx], vars[idx + 1]
-                if param[2]:
-                    x = F.linear(x, w, b)
-                else:
-                    x = F.linear(x, w, None)
+                if start_idx <= p:
+                    w, b = vars[idx], vars[idx + 1]
+                    if param[2]:
+                        x = F.linear(x, w, b)
+                    else:
+                        x = F.linear(x, w, None)
                 idx += 2
-                # print('forward:', idx, x.norm().item())
             elif name is 'bn':
-                w, b = vars[idx], vars[idx + 1]
-                running_mean, running_var = self.vars_bn[bn_idx], self.vars_bn[bn_idx+1]
-                x = F.batch_norm(x, running_mean, running_var, weight=w, bias=b, training=bn_training)
+                if start_idx <= p:
+                    w, b = vars[idx], vars[idx + 1]
+                    running_mean, running_var = self.vars_bn[bn_idx], self.vars_bn[bn_idx+1]
+                    x = F.batch_norm(x, running_mean, running_var, weight=w, bias=b, training=bn_training)
                 idx += 2
                 bn_idx += 2
 
-            elif name is 'flatten':
-                # print(x.shape)
-                x = x.view(x.size(0), -1)
-            elif name is 'reshape':
-                # [b, 8] => [b, 2, 2, 2]
-                x = x.view(x.size(0), *param)
-            elif name is 'relu':
-                x = F.relu(x, inplace=param[0])
-            elif name is 'leakyrelu':
-                x = F.leaky_relu(x, negative_slope=param[0], inplace=param[1])
-            elif name is 'tanh':
-                x = torch.tanh(x)
-                #x = F.tanh(x)
-            elif name is 'sigmoid':
-                x = torch.sigmoid(x)
-            elif name is 'softmax':
-                x = torch.softmax(x)
-            elif name is 'upsample':
-                x = F.upsample_nearest(x, scale_factor=param[0])
-            elif name is 'max_pool2d':
-                x = F.max_pool2d(x, param[0], param[1], param[2])
-            elif name is 'avg_pool2d':
-                pdb.set_trace()
-                x = F.avg_pool2d(x, param[0], param[1], param[2])
-                pdb.set_trace()
+            elif start_idx <= p:
+                if name is 'flatten':
+                    x = x.view(x.size(0), -1)
+                elif name is 'reshape':
+                    x = x.view(x.size(0), *param)
+                elif name is 'relu':
+                    x = F.relu(x, inplace=param[0])
+                elif name is 'leakyrelu':
+                    x = F.leaky_relu(x, negative_slope=param[0], inplace=param[1])
+                elif name is 'tanh':
+                    x = torch.tanh(x)
+                elif name is 'sigmoid':
+                    x = torch.sigmoid(x)
+                elif name is 'softmax':
+                    x = torch.softmax(x)
+                elif name is 'upsample':
+                    x = F.upsample_nearest(x, scale_factor=param[0])
+                elif name is 'max_pool2d':
+                    x = F.max_pool2d(x, param[0], param[1], param[2])
+                elif name is 'avg_pool2d':
+                    x = F.avg_pool2d(x, param[0], param[1], param[2])
 
-            else:
-                raise NotImplementedError
-
+            p += 1
             if post_hook == p:
                 hook_data = x
                 return hook_data
