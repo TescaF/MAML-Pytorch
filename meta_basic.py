@@ -47,14 +47,17 @@ class Meta(nn.Module):
         img_data = torch.stack(imgs).float().to(self.device)
         return img_data
 
-    def adadelta_update_base(self, net, update_step, data_in, y_spt, y_qry, spt_idx, qry_idx):
+    def adadelta_update_base(self, net, update_step, data_in, y_spt, y_qry, spt_idx, qry_idx, bn=True):
         test_losses = [0 for _ in range(update_step + 1)]
         train_losses = [0 for _ in range(update_step)]
         eps = 1e-6
         rho = self.update_lr
 
         with torch.no_grad():
-            logits_q = net(data_in, vars=None)[spt_idx:qry_idx]
+            if bn:
+                logits_q = net(data_in, vars=None)[spt_idx:qry_idx]
+            else:
+                logits_q = net(data_in[spt_idx:qry_idx], vars=None)
             loss_q = F.mse_loss(torch.sigmoid(logits_q).squeeze(), y_qry)
             test_losses[0] += loss_q.item()
 
@@ -65,7 +68,10 @@ class Meta(nn.Module):
             deltas.append(torch.zeros_like(p))
 
         for k in range(update_step):
-            logits_r = net(data_in, vars=(None if k==0 else s_weights))[:spt_idx]
+            if bn:
+                logits_r = net(data_in, vars=(None if k==0 else s_weights))[:spt_idx]
+            else:
+                logits_r = net(data_in[:spt_idx], vars=(None if k==0 else s_weights))
             #loss_r = F.mse_loss(logits_r, y_spt)
             loss_r = F.mse_loss(torch.sigmoid(logits_r).squeeze(), y_spt)
             grad_r = list(torch.autograd.grad(loss_r, (net.parameters() if k==0 else s_weights)))
@@ -83,14 +89,20 @@ class Meta(nn.Module):
                 deltas[p].mul_(rho).addcmul_(1-rho, curr_delta, curr_delta)
 
             with torch.no_grad():
-                logits_q = net(data_in, vars=s_weights)[spt_idx:qry_idx]
+                if bn:
+                    logits_q = net(data_in, vars=s_weights)[spt_idx:qry_idx]
+                else:
+                    logits_q = net(data_in[spt_idx:qry_idx], vars=s_weights)
                 loss_q = F.mse_loss(torch.sigmoid(logits_q).squeeze(), y_qry)
                 test_losses[k+1] += loss_q.item()
-        logits_q = net(data_in, vars=s_weights)[spt_idx:qry_idx]
+        if bn:
+            logits_q = net(data_in, vars=s_weights)[spt_idx:qry_idx]
+        else:
+            logits_q = net(data_in[spt_idx:qry_idx], vars=s_weights)
         loss_q = F.mse_loss(torch.sigmoid(logits_q).squeeze(), y_qry)
         return loss_q, [test_losses, train_losses]
 
-    def forward(self, x_spt, y_spt, x_qry, y_qry):
+    def forward(self, x_spt, y_spt, x_qry, y_qry, bn):
         task_num = len(x_spt) #.size(0)
         losses_q = 0
         test_losses = [0 for _ in range(self.update_step + 1)]
@@ -102,7 +114,7 @@ class Meta(nn.Module):
         for i in range(task_num):
             full_set = x_spt[i] + x_qry[i] # + n_spt[i]  #[x_spt[i],x_qry[i]] #,n_spt[i]]
             all_input = self.get_normal_images(full_set) #self.resnet_fts(data_in).transpose(1,3)
-            loss_q, losses = self.adadelta_update_base(self.base_net, self.update_step, all_input, y_spt[i], y_qry[i], idx_a, idx_b)
+            loss_q, losses = self.adadelta_update_base(self.base_net, self.update_step, all_input, y_spt[i], y_qry[i], idx_a, idx_b,bn=bn)
             test_losses = [test_losses[j] + losses[0][j] for j in range(len(test_losses))]
             ft_train_loss = [ft_train_loss[j] + losses[1][j] for j in range(len(ft_train_loss))]
             #pt_train_loss = [pt_train_loss[j] + losses[2][j] for j in range(len(pt_train_loss))]
@@ -120,7 +132,7 @@ class Meta(nn.Module):
 
         return loss, [np.array(test_losses)/task_num, np.array(pt_train_loss)/task_num, np.array(ft_train_loss)/task_num]
 
-    def tune(self, x_spt, y_spt, x_qry, y_qry):
+    def tune(self, x_spt, y_spt, x_qry, y_qry, bn):
         base_net = deepcopy(self.base_net)
         test_losses = [0 for _ in range(self.update_step_test + 1)]
         ft_train_loss = [0 for _ in range(self.update_step_test)]
@@ -129,7 +141,7 @@ class Meta(nn.Module):
         idx_b = idx_a + len(x_qry) #.shape[1]
         full_set = x_spt + x_qry # + n_spt[i]  #[x_spt[i],x_qry[i]] #,n_spt[i]]
         all_input = self.get_normal_images(full_set) #self.resnet_fts(data_in).transpose(1,3)
-        loss_q, losses = self.adadelta_update_base(base_net, self.update_step_test, all_input, y_spt, y_qry, idx_a, idx_b)
+        loss_q, losses = self.adadelta_update_base(base_net, self.update_step_test, all_input, y_spt, y_qry, idx_a, idx_b, bn=bn)
         test_losses = losses[0]
         ft_train_loss = losses[1]
         qry_logits = None #logits[idx_a:idx_b]

@@ -60,6 +60,7 @@ def main():
                        k_qry=args.k_qry,
                        dim_out=dim_output)
 
+    bn = (args.bn == 1)
     device = torch.device('cuda:0')
     save_path = home + '/data/models/model_tasksz' + str(args.task_num) + '_batchsz' + str(args.k_spt) + '_lr' + str(args.update_lr) + '_mr' + str(args.meta_lr) + '_exclude' + str(args.exclude) + '_epoch'
     base_config = [
@@ -102,7 +103,7 @@ def main():
         y_qry = batch_y[:,k_spt:,:]
         y_spt, y_qry = torch.from_numpy(y_spt).float().to(device), torch.from_numpy(y_qry).float().to(device)
 
-        test_loss, loss_report = maml.forward(spt_keys, y_spt, qry_keys, y_qry)
+        test_loss, loss_report = maml.forward(spt_keys, y_spt, qry_keys, y_qry, bn)
         test_losses.append(loss_report[0])
         pt_training.append(loss_report[1])
         ft_training.append(loss_report[2])
@@ -114,23 +115,24 @@ def main():
             test_losses,ft_training,pt_training = [],[],[]
 
         if epoch % 500 == 0:  # evaluation
-            torch.save(maml.state_dict(), save_path + str(epoch%2000) + "-v2.pt")
+            torch.save(maml.state_dict(), save_path + str(epoch%2000) + "_bn" + str(args.bn) + ".pt")
             test_losses,ft_training,pt_training = [],[],[]
-            pos_keys,batch_y = db_test.next()
-            y_spt = batch_y[:,:k_spt,:]
-            y_qry = batch_y[:,k_spt:,:]
-            y_spt, y_qry = torch.from_numpy(y_spt).float().to(device), torch.from_numpy(y_qry).float().to(device)
+            for _ in range(100):
+                pos_keys,batch_y = db_test.next()
+                y_spt = batch_y[:,:k_spt,:]
+                y_qry = batch_y[:,k_spt:,:]
+                y_spt, y_qry = torch.from_numpy(y_spt).float().to(device), torch.from_numpy(y_qry).float().to(device)
 
-            t = 0
-            for y_spt_one, y_qry_one, pos_one in zip(y_spt,y_qry,pos_keys):
-                spt_keys = pos_one[:k_spt]
-                qry_keys = pos_one[k_spt:]
-                loss_report, pred = maml.tune(spt_keys,y_spt_one,qry_keys,y_qry_one)
-                #loss_report, pred = maml.tune(n_spt_one, x_spt_one,y_spt_one,x_qry_one,y_qry_one)
-                test_losses.append(loss_report[0])
-                pt_training.append(loss_report[1])
-                ft_training.append(loss_report[2])
-                t+=1
+                t = 0
+                for y_spt_one, y_qry_one, pos_one in zip(y_spt,y_qry,pos_keys):
+                    spt_keys = pos_one[:k_spt]
+                    qry_keys = pos_one[k_spt:]
+                    loss_report, pred = maml.tune(spt_keys,y_spt_one,qry_keys,y_qry_one,bn)
+                    #loss_report, pred = maml.tune(n_spt_one, x_spt_one,y_spt_one,x_qry_one,y_qry_one)
+                    test_losses.append(loss_report[0])
+                    pt_training.append(loss_report[1])
+                    ft_training.append(loss_report[2])
+                    t+=1
 
             print('Test Loss:', np.array(test_losses).mean(axis=0))
             print('Ft Loss:', np.array(ft_training).mean(axis=0))
@@ -143,6 +145,7 @@ if __name__ == '__main__':
 
     argparser = argparse.ArgumentParser()
     argparser.add_argument('--load', type=int, help='epoch number', default=0)
+    argparser.add_argument('--bn', type=int, help='epoch number', default=1)
     argparser.add_argument('--exclude', type=int, help='epoch number', default=0)
     argparser.add_argument('--sample_size', type=int, help='epoch number', default=10)
     argparser.add_argument('--epoch', type=int, help='epoch number', default=100001)
